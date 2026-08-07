@@ -60,4 +60,44 @@ describe('scoreListing', () => {
     expect(scoreListing(wrongGeneration, profile).rejected).toBe(true);
     expect(scoreListing(wrongBody, profile).rejected).toBe(false);
   });
+
+  it('keeps E90 fully eligible and gives E91 only a +5 practicality bonus', () => {
+    const profile = searchProfiles[0]!;
+    const attributes = {
+      ...rawListing().attributes,
+      Nadwozie: 'Sedan',
+    };
+    const e90 = normalizeListing(
+      rawListing({
+        title: 'BMW E90 325i Sedan',
+        description: rawListing().description!.replace('Touring', 'Sedan'),
+        attributes,
+      }),
+      profile,
+    );
+    const e91 = normalizeListing(rawListing(), profile);
+    const e90Score = scoreListing(e90, profile);
+    const e91Score = scoreListing(e91, profile);
+    expect(e90Score.rejected).toBe(false);
+    expect(e90Score.breakdown.bodyStyleBonus).toBe(0);
+    expect(e91Score.breakdown.bodyStyleBonus).toBe(5);
+    expect(e91Score.totalScore - e90Score.totalScore).toBe(5);
+  });
+
+  it('prefers RWD and penalizes xDrive without hard rejection', () => {
+    const profile = searchProfiles[0]!;
+    const rwd = normalizeListing(rawListing(), profile);
+    const xDrive = normalizeListing(
+      rawListing({
+        title: 'BMW Seria 3 E91 325xi Touring Automat',
+        attributes: { ...rawListing().attributes, Napęd: 'xDrive' },
+      }),
+      profile,
+    );
+    const rwdScore = scoreListing(rwd, profile);
+    const xDriveScore = scoreListing(xDrive, profile);
+    expect(xDriveScore.rejected).toBe(false);
+    expect(rwdScore.breakdown.drivetrain).toBe(5);
+    expect(xDriveScore.breakdown.drivetrain).toBe(-8);
+  });
 });

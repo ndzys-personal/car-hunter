@@ -7,7 +7,7 @@ import { rawListing } from './fixtures.js';
 describe('inferEngine', () => {
   it('prefers an explicit engine code', () => {
     const listing = normalizeListing(rawListing(), searchProfiles[0]!);
-    expect(inferEngine(listing)).toMatchObject({ engine: 'N52B25', confidence: 0.98 });
+    expect(inferEngine(listing)).toMatchObject({ engine: 'N52B25', confidence: 0.9 });
   });
 
   it('infers M57 for a period-correct 3.0 diesel', () => {
@@ -40,5 +40,25 @@ describe('inferEngine', () => {
       searchProfiles[0]!,
     );
     expect(inferEngine(listing).engine).toBe('unknown');
+  });
+
+  it('keeps a 2009 325i 3.0 218 KM ambiguous without stronger evidence', () => {
+    const listing = normalizeListing(
+      rawListing({
+        title: 'BMW E90 325i Sedan',
+        description: 'Benzyna, automat. Kod silnika do potwierdzenia.',
+        attributes: {
+          'Rok produkcji': '2009',
+          'Rodzaj paliwa': 'Benzyna',
+          Pojemność: '2996 cm3',
+          Moc: '218 KM',
+          Nadwozie: 'Sedan',
+        },
+      }),
+      searchProfiles[0]!,
+    );
+    const inference = inferEngine(listing);
+    expect(inference.engine).toBe('N52B30_or_N53B30');
+    expect(inference.confidence).toBeLessThanOrEqual(0.7);
   });
 });

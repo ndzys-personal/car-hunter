@@ -176,10 +176,15 @@ export class CarHunterRepository {
           provider,
           model,
           prompt_version: promptVersion,
-          seller_type: analysis.sellerType,
+          seller_type: analysis.sellerInferredType,
+          seller_declared_type: analysis.sellerDeclaredType,
+          seller_inferred_type: analysis.sellerInferredType,
           seller_confidence: analysis.sellerConfidence,
+          seller_signals: analysis.sellerSignals,
           likely_engine: analysis.likelyEngine,
           engine_confidence: analysis.engineConfidence,
+          analysis_confidence: analysis.analysisConfidence,
+          major_uncertainties: analysis.majorUncertainties,
           fit_score: analysis.fitScore,
           risk_score: analysis.riskScore,
           total_score: analysis.totalScore,
@@ -187,6 +192,7 @@ export class CarHunterRepository {
           positives: analysis.positives,
           red_flags: analysis.redFlags,
           questions_for_seller: analysis.questionsForSeller,
+          verification_items: analysis.verificationItems,
           summary: analysis.summary,
           verdict: analysis.verdict,
           recommended_action: analysis.recommendedAction,
@@ -207,8 +213,9 @@ export class CarHunterRepository {
       const { error: sellerError } = await this.db
         .from('sellers')
         .update({
-          likely_type: analysis.sellerType,
+          likely_type: analysis.sellerInferredType,
           confidence: analysis.sellerConfidence,
+          signals: analysis.sellerSignals,
           last_seen_at: new Date().toISOString(),
         })
         .eq('id', listingRow.seller_id);
@@ -313,10 +320,16 @@ function listingToRow(listing: Listing, score: DeterministicScore) {
 
 function analysisFromRow(row: Record<string, unknown>): ListingAnalysis {
   return {
-    sellerType: row.seller_type as ListingAnalysis['sellerType'],
+    sellerDeclaredType: (row.seller_declared_type ??
+      'uncertain') as ListingAnalysis['sellerDeclaredType'],
+    sellerInferredType: (row.seller_inferred_type ??
+      row.seller_type) as ListingAnalysis['sellerInferredType'],
     sellerConfidence: Number(row.seller_confidence),
-    likelyEngine: String(row.likely_engine),
+    sellerSignals: (row.seller_signals ?? []) as string[],
+    likelyEngine: String(row.likely_engine) as ListingAnalysis['likelyEngine'],
     engineConfidence: Number(row.engine_confidence),
+    analysisConfidence: Number(row.analysis_confidence ?? 0.5),
+    majorUncertainties: (row.major_uncertainties ?? []) as string[],
     fitScore: Number(row.fit_score),
     riskScore: Number(row.risk_score),
     totalScore: Number(row.total_score),
@@ -324,6 +337,7 @@ function analysisFromRow(row: Record<string, unknown>): ListingAnalysis {
     positives: row.positives as string[],
     redFlags: row.red_flags as string[],
     questionsForSeller: row.questions_for_seller as string[],
+    verificationItems: (row.verification_items ?? row.questions_for_seller ?? []) as string[],
     summary: String(row.summary),
     verdict: String(row.verdict),
     recommendedAction: row.recommended_action as ListingAnalysis['recommendedAction'],

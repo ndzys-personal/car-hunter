@@ -215,7 +215,7 @@ function parseGearbox(value: string): Gearbox {
 }
 
 function parseDrive(value: string): DriveType {
-  if (/xdrive|4x4|awd/i.test(value)) return 'awd';
+  if (/xdrive|4x4|awd|\b[35]\d{2}xi\b/i.test(value)) return 'awd';
   if (/rwd|tyln/i.test(value)) return 'rwd';
   if (/fwd|przedn/i.test(value)) return 'fwd';
   return 'unknown';

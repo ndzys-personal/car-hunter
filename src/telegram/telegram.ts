@@ -56,7 +56,7 @@ export function formatMessage(
   analysis: ListingAnalysis,
   priceChanged: boolean,
 ): string {
-  const priority = analysis.totalScore >= 85 ? '🔥 PILNE' : '🚗 REKOMENDOWANE';
+  const priority = recommendationLabel(analysis);
   const change = priceChanged ? ' · 📉 ZMIANA CENY' : '';
   const facts = [
     `🚘 Model: ${escapeHtml([listing.generation, listing.variant].filter(Boolean).join(' ') || listing.model)}`,
@@ -69,15 +69,19 @@ export function formatMessage(
     listing.powerHp ? `🏎 ${listing.powerHp} KM` : null,
     listing.engineCapacityCc ? `🔩 ${formatNumber(listing.engineCapacityCc)} cm³` : null,
     analysis.likelyEngine !== 'unknown'
-      ? `🔧 Prawdopodobny silnik: ${escapeHtml(analysis.likelyEngine)} (${Math.round(analysis.engineConfidence * 100)}%)`
+      ? `🔧 Prawdopodobny silnik: ${escapeHtml(engineLabel(analysis.likelyEngine))} (${Math.round(analysis.engineConfidence * 100)}%)`
       : null,
     listing.driveType !== 'unknown' ? `🚗 Napęd: ${listing.driveType.toUpperCase()}` : null,
-    `👤 Sprzedający: ${sellerLabel(analysis.sellerType)} (${Math.round(analysis.sellerConfidence * 100)}%)`,
+    `👤 Typ deklarowany: ${sellerLabel(analysis.sellerDeclaredType)}`,
+    `🕵️ Typ wnioskowany: ${sellerLabel(analysis.sellerInferredType)} (${Math.round(analysis.sellerConfidence * 100)}%)`,
     listing.location ? `📍 ${escapeHtml(listing.location)}` : null,
     `🌐 Źródło: ${listing.source.toUpperCase()}`,
   ].filter(Boolean);
   const positives = analysis.positives.slice(0, 3).map((item) => `• ${escapeHtml(item)}`);
   const risks = analysis.redFlags.slice(0, 3).map((item) => `• ${escapeHtml(item)}`);
+  const verification = analysis.verificationItems
+    .slice(0, 4)
+    .map((item) => `• ${escapeHtml(item)}`);
 
   return [
     `<b>${priority} — ${analysis.totalScore}/100${change}</b>`,
@@ -93,12 +97,33 @@ export function formatMessage(
     '<b>⚠️ Ryzyka</b>',
     ...(risks.length ? risks : ['• Brak oczywistych sygnałów w treści ogłoszenia']),
     '',
+    '<b>🔎 Sprawdź przed wizytą</b>',
+    ...verification,
+    '',
     '<b>🤖 Werdykt</b>',
     escapeHtml(analysis.verdict),
     '',
     `<b>Następny krok:</b> ${actionLabel(analysis.recommendedAction)}`,
     `<a href="${escapeHtml(listing.url)}">👉 Otwórz ogłoszenie</a>`,
   ].join('\n');
+}
+
+export function recommendationLabel(
+  analysis: Pick<
+    ListingAnalysis,
+    'totalScore' | 'analysisConfidence' | 'engineConfidence' | 'likelyEngine' | 'majorUncertainties'
+  >,
+): string {
+  const urgent =
+    analysis.totalScore >= 90 &&
+    analysis.analysisConfidence >= 0.8 &&
+    analysis.engineConfidence >= 0.8 &&
+    !['unknown', 'N52B30_or_N53B30'].includes(analysis.likelyEngine) &&
+    analysis.majorUncertainties.length === 0;
+  if (urgent) return '🔥 PILNE';
+  if (analysis.totalScore >= 80) return '⭐ BARDZO CIEKAWE';
+  if (analysis.totalScore >= 70) return '🚗 REKOMENDOWANE';
+  return '🔎 DO WERYFIKACJI';
 }
 
 export function escapeHtml(value: string): string {
@@ -124,12 +149,19 @@ function fuelLabel(value: PersistedListing['fuelType']): string {
   }[value];
 }
 
-function sellerLabel(value: ListingAnalysis['sellerType']): string {
+function sellerLabel(value: ListingAnalysis['sellerDeclaredType']): string {
   return { private: 'prywatny', dealer: 'dealer', uncertain: 'niepewny' }[value];
 }
 
 function actionLabel(value: ListingAnalysis['recommendedAction']): string {
-  return { ignore: 'pomiń', review: 'sprawdź ręcznie', call: 'zadzwoń', inspect: 'umów oględziny' }[
-    value
-  ];
+  return {
+    ignore: 'pomiń',
+    review: 'sprawdź ręcznie',
+    call: 'skontaktuj się ze sprzedawcą',
+    inspect: 'umów oględziny',
+  }[value];
+}
+
+function engineLabel(value: ListingAnalysis['likelyEngine']): string {
+  return value === 'N52B30_or_N53B30' ? 'N52B30 / N53B30 — do weryfikacji po VIN' : value;
 }

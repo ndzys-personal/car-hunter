@@ -4,6 +4,7 @@ export type Gearbox = 'manual' | 'automatic' | 'unknown';
 export type DriveType = 'rwd' | 'awd' | 'fwd' | 'unknown';
 export type SellerType = 'private' | 'dealer' | 'uncertain';
 export type RecommendedAction = 'ignore' | 'review' | 'call' | 'inspect';
+export type EngineCode = 'N52B25' | 'N52B30' | 'N52B30_or_N53B30' | 'M57' | 'unknown';
 
 export interface SearchSourceConfig {
   enabled: boolean;
@@ -20,6 +21,13 @@ export interface SearchProfile {
   year: { min: number; max: number };
   pricePln: { idealMax: number; hardMax: number };
   preferredEngines: string[];
+  preferences: {
+    preferredDrive: 'rwd';
+    rwdBonus: number;
+    awdPenalty: number;
+    touringPracticalityBonus: number;
+    neutralFeatures: string[];
+  };
   sources: Record<SourceName, SearchSourceConfig>;
 }
 
@@ -76,11 +84,13 @@ export interface Listing {
 
 export interface ScoreBreakdown {
   profileFit: number;
+  bodyStyleBonus: number;
   variant: number;
   year: number;
   price: number;
   engine: number;
   transmission: number;
+  drivetrain: number;
   seller: number;
   dataQuality: number;
 }
@@ -93,10 +103,14 @@ export interface DeterministicScore {
 }
 
 export interface ListingAnalysis {
-  sellerType: SellerType;
+  sellerDeclaredType: SellerType;
+  sellerInferredType: SellerType;
   sellerConfidence: number;
-  likelyEngine: string;
+  sellerSignals: string[];
+  likelyEngine: EngineCode;
   engineConfidence: number;
+  analysisConfidence: number;
+  majorUncertainties: string[];
   fitScore: number;
   riskScore: number;
   totalScore: number;
@@ -104,6 +118,7 @@ export interface ListingAnalysis {
   positives: string[];
   redFlags: string[];
   questionsForSeller: string[];
+  verificationItems: string[];
   summary: string;
   verdict: string;
   recommendedAction: RecommendedAction;

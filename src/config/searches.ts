@@ -18,6 +18,13 @@ export const searchProfiles: SearchProfile[] = [
     year: { min: 2005, max: 2012 },
     pricePln: { idealMax: 35_000, hardMax: 45_000 },
     preferredEngines: ['N52B25', 'N52B30', 'M57'],
+    preferences: {
+      preferredDrive: 'rwd',
+      rwdBonus: 5,
+      awdPenalty: 8,
+      touringPracticalityBonus: 5,
+      neutralFeatures: ['M-pakiet'],
+    },
     sources: {
       otomoto: source('otomoto', 'E91'),
       olx: source('olx', 'E91'),
@@ -34,6 +41,13 @@ export const searchProfiles: SearchProfile[] = [
     year: { min: 2004, max: 2010 },
     pricePln: { idealMax: 40_000, hardMax: 50_000 },
     preferredEngines: ['N52B25', 'N52B30', 'M57'],
+    preferences: {
+      preferredDrive: 'rwd',
+      rwdBonus: 5,
+      awdPenalty: 8,
+      touringPracticalityBonus: 5,
+      neutralFeatures: ['M-pakiet'],
+    },
     sources: {
       otomoto: source('otomoto', 'E61'),
       olx: source('olx', 'E61'),

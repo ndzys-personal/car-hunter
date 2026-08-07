@@ -9,23 +9,31 @@ import { inferEngine } from './engine-inference.js';
 export function scoreListing(listing: Listing, profile: SearchProfile): DeterministicScore {
   const reasons: string[] = [];
   const profileFit = scoreProfileFit(listing, profile, reasons);
-  const variant = listing.variant && profile.variants.includes(listing.variant) ? 15 : 0;
+  const bodyStyleBonus =
+    listing.bodyType === 'Touring' ? profile.preferences.touringPracticalityBonus : 0;
+  const variant = listing.variant && profile.variants.includes(listing.variant) ? 10 : 0;
   const year = scoreYear(listing.year, profile, reasons);
   const price = scorePrice(listing.pricePln, profile, reasons);
   const inferred = inferEngine(listing);
-  const engine =
-    inferred.engine === 'unknown' ? 3 : profile.preferredEngines.includes(inferred.engine) ? 10 : 0;
-  const transmission = listing.gearbox === 'unknown' ? 2 : 5;
-  const seller =
-    listing.declaredSellerType === 'dealer' ? 2 : listing.declaredSellerType === 'private' ? 5 : 3;
+  const engine = scoreEngine(inferred.engine, inferred.confidence, profile);
+  const transmission = listing.gearbox === 'unknown' ? 0 : 3;
+  const drivetrain =
+    listing.driveType === 'rwd'
+      ? profile.preferences.rwdBonus
+      : listing.driveType === 'awd'
+        ? -profile.preferences.awdPenalty
+        : 0;
+  const seller = 0;
   const dataQuality = scoreDataQuality(listing);
   const breakdown: ScoreBreakdown = {
     profileFit,
+    bodyStyleBonus,
     variant,
     year,
     price,
     engine,
     transmission,
+    drivetrain,
     seller,
     dataQuality,
   };
@@ -47,7 +55,10 @@ export function scoreListing(listing: Listing, profile: SearchProfile): Determin
   if (!bodyMatches) reasons.push(`Nie potwierdzono nadwozia ${profile.bodyTypes.join('/')}.`);
 
   if (variant === 0) reasons.push('Nie potwierdzono docelowego wariantu.');
-  if (engine === 10) reasons.push(`Silnik ${inferred.engine} pasuje do preferencji.`);
+  if (engine >= 6) reasons.push(`Silnik ${inferred.engine} pasuje do preferencji.`);
+  if (listing.bodyType === 'Touring') reasons.push('Touring: mały bonus za praktyczność.');
+  if (listing.driveType === 'rwd') reasons.push('RWD jest zgodne z preferencjami.');
+  if (listing.driveType === 'awd') reasons.push('xDrive: kara za dodatkową złożoność napędu.');
 
   return {
     totalScore: rejected ? Math.min(49, sum(breakdown)) : Math.min(100, sum(breakdown)),
@@ -91,13 +102,13 @@ function scoreYear(year: number | null, profile: SearchProfile, reasons: string[
 }
 
 function scorePrice(price: number | null, profile: SearchProfile, reasons: string[]): number {
-  if (price === null) return 4;
-  if (price <= profile.pricePln.idealMax) return 20;
+  if (price === null) return 2;
+  if (price <= profile.pricePln.idealMax) return 15;
   if (price <= profile.pricePln.hardMax) {
     const span = profile.pricePln.hardMax - profile.pricePln.idealMax;
-    const penalty = Math.round(((price - profile.pricePln.idealMax) / span) * 12);
+    const penalty = Math.round(((price - profile.pricePln.idealMax) / span) * 7);
     reasons.push('Cena przekracza limit idealny, ale mieści się w limicie twardym.');
-    return Math.max(8, 20 - penalty);
+    return Math.max(8, 15 - penalty);
   }
   reasons.push('Cena przekracza twardy limit profilu.');
   return 0;
@@ -121,12 +132,24 @@ function scoreDataQuality(listing: Listing): number {
 function sum(breakdown: ScoreBreakdown): number {
   return (
     breakdown.profileFit +
+    breakdown.bodyStyleBonus +
     breakdown.variant +
     breakdown.year +
     breakdown.price +
     breakdown.engine +
     breakdown.transmission +
+    breakdown.drivetrain +
     breakdown.seller +
     breakdown.dataQuality
   );
+}
+
+function scoreEngine(
+  engine: ReturnType<typeof inferEngine>['engine'],
+  confidence: number,
+  profile: SearchProfile,
+): number {
+  if (engine === 'unknown') return 0;
+  if (engine === 'N52B30_or_N53B30') return 2;
+  return profile.preferredEngines.includes(engine) ? Math.round(8 * confidence) : 0;
 }

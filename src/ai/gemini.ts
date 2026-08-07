@@ -7,6 +7,7 @@ import type {
 } from '../domain/types.js';
 import type { AiProvider } from './provider.js';
 import { LISTING_ANALYSIS_SYSTEM_PROMPT } from './prompts/listing-analysis.js';
+import { applyRecommendationPolicy } from './recommendation-policy.js';
 import { rawListingAnalysisJsonSchema, rawListingAnalysisSchema } from './schema.js';
 
 export class GeminiProvider implements AiProvider {
@@ -40,13 +41,6 @@ export class GeminiProvider implements AiProvider {
     });
     if (!response.text) throw new Error('Gemini returned an empty response');
     const raw = rawListingAnalysisSchema.parse(JSON.parse(response.text));
-    const totalScore = clamp(
-      Math.round(deterministicScore.totalScore * 0.7 + raw.fitScore * 0.3 - raw.riskScore * 0.15),
-    );
-    return { ...raw, totalScore };
+    return applyRecommendationPolicy(raw, listing, profile, deterministicScore);
   }
-}
-
-function clamp(value: number): number {
-  return Math.max(0, Math.min(100, value));
 }

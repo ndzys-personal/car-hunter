@@ -1,7 +1,6 @@
 name: Car Hunter scheduled scan
 
 on:
-  workflow_dispatch:
   schedule:
     # Avoid GitHub Actions scheduler congestion at :00 and :30 (UTC).
     - cron: '7 * * * *'

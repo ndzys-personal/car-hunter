@@ -3,7 +3,8 @@ name: Car Hunter scan
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    # Avoid GitHub Actions scheduler congestion at :00 and :30 (UTC).
+    - cron: '7,37 * * * *'
 
 concurrency:
   group: car-hunter-scan

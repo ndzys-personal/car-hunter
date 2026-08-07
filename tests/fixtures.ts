@@ -11,6 +11,7 @@ export function rawListing(overrides: Partial<RawListing> = {}): RawListing {
     priceText: '21 900 PLN',
     location: 'Wrocław',
     declaredSellerType: 'private',
+    publishedAt: '2026-08-07T06:30:00.000Z',
     attributes: {
       'Rok produkcji': '2006',
       Przebieg: '267 000 km',

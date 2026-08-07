@@ -35,11 +35,14 @@ describe.skipIf(!browserAvailable)('Playwright marketplace adapter', () => {
         return;
       }
       const id = request.url?.split('/').at(-1) ?? 'unknown';
+      const datePosted =
+        id === 'one' ? new Date(Date.now() - 60 * 60_000).toISOString() : undefined;
       response.end(`<!doctype html><html><head>
         <script type="application/ld+json">${JSON.stringify({
           '@type': 'Vehicle',
           name: `BMW E91 325i Touring ${id}`,
           description: 'Prywatne ogłoszenie testowe',
+          datePosted,
           vehicleModelDate: 2006,
           fuelType: 'Benzyna',
           vehicleTransmission: 'Automatyczna',
@@ -87,6 +90,10 @@ describe.skipIf(!browserAvailable)('Playwright marketplace adapter', () => {
         'Typ nadwozia': 'Kombi',
       },
     });
+    const dated = result.listings.find((listing) => listing.externalId === 'one');
+    const undated = result.listings.find((listing) => listing.externalId === 'two');
+    expect(dated?.publishedAt).not.toBeNull();
+    expect(undated?.publishedAt).toBeNull();
   }, 20_000);
 
   it('reports a truncation error when a safety limit hides results', async () => {

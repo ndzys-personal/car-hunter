@@ -7,6 +7,7 @@ import type {
   SellerType,
 } from '../domain/types.js';
 import { logger } from '../services/logger.js';
+import { parseMarketplacePublishedAt } from '../services/publication-date.js';
 import type { MarketplaceAdapter } from './marketplace.js';
 
 interface PagePayload {
@@ -17,6 +18,7 @@ interface PagePayload {
   sellerName?: string | undefined;
   declaredSellerType: SellerType;
   primaryImageUrl?: string | undefined;
+  publicationDateText?: string | undefined;
   attributes: Record<string, string>;
 }
 
@@ -24,6 +26,14 @@ export abstract class PlaywrightMarketplaceAdapter implements MarketplaceAdapter
   abstract readonly name: SourceName;
   protected abstract matchesListingUrl(url: URL): boolean;
   protected abstract externalId(url: URL): string;
+  protected publicationDateSelectors(): string[] {
+    return [
+      '[itemprop="datePosted"]',
+      '[itemprop="datePublished"]',
+      'meta[property="article:published_time"]',
+      'time[data-testid*="publish" i]',
+    ];
+  }
 
   constructor(
     private readonly options: {
@@ -61,7 +71,8 @@ export abstract class PlaywrightMarketplaceAdapter implements MarketplaceAdapter
             if (!url) continue;
             try {
               await detailPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-              const payload = await extractPayload(detailPage);
+              const payload = await extractPayload(detailPage, this.publicationDateSelectors());
+              const scrapedAt = new Date().toISOString();
               results.push({
                 source: this.name,
                 externalId: this.externalId(new URL(url)),
@@ -69,12 +80,13 @@ export abstract class PlaywrightMarketplaceAdapter implements MarketplaceAdapter
                 title: payload.title,
                 description: payload.description,
                 declaredSellerType: payload.declaredSellerType,
+                publishedAt: parseMarketplacePublishedAt(payload.publicationDateText, scrapedAt),
                 attributes: payload.attributes,
                 ...(payload.priceText ? { priceText: payload.priceText } : {}),
                 ...(payload.location ? { location: payload.location } : {}),
                 ...(payload.sellerName ? { sellerName: payload.sellerName } : {}),
                 ...(payload.primaryImageUrl ? { primaryImageUrl: payload.primaryImageUrl } : {}),
-                scrapedAt: new Date().toISOString(),
+                scrapedAt,
               });
             } catch (error) {
               errors += 1;
@@ -220,8 +232,8 @@ export abstract class PlaywrightMarketplaceAdapter implements MarketplaceAdapter
   }
 }
 
-async function extractPayload(page: Page): Promise<PagePayload> {
-  return page.evaluate(() => {
+async function extractPayload(page: Page, publicationSelectors: string[]): Promise<PagePayload> {
+  return page.evaluate((sourcePublicationSelectors) => {
     // Object methods retain their names without tsx/esbuild injecting the
     // Node-side `__name` helper into code serialized for the browser context.
     const helpers = {
@@ -230,6 +242,15 @@ async function extractPayload(page: Page): Promise<PagePayload> {
       },
       meta(selector: string) {
         return this.clean(document.querySelector<HTMLMetaElement>(selector)?.content);
+      },
+      publicationValue(element?: Element | null) {
+        if (!element) return '';
+        return this.clean(
+          element.getAttribute('datetime') ??
+            element.getAttribute('content') ??
+            element.getAttribute('data-date') ??
+            element.textContent,
+        );
       },
     };
     const jsonLd = [
@@ -333,6 +354,21 @@ async function extractPayload(page: Page): Promise<PagePayload> {
     const sellerText = helpers.clean(seller?.name);
     const rawBodyText = document.body.innerText;
     const bodyText = helpers.clean(rawBodyText);
+    const structuredPublicationDate = helpers.clean(
+      String(
+        jsonLd?.datePosted ??
+          jsonLd?.datePublished ??
+          jsonLd?.uploadDate ??
+          jsonLd?.offers?.datePosted ??
+          '',
+      ),
+    );
+    const selectorPublicationDate = sourcePublicationSelectors
+      .map((selector) => helpers.publicationValue(document.querySelector(selector)))
+      .find(Boolean);
+    const visiblePublicationDate = rawBodyText.match(
+      /(?:Opublikowano|Dodane|Wystawiono)\s*:?\s*((?:dzisiaj|wczoraj)(?:\s*,?\s*(?:o\s*)?\d{1,2}:\d{2})?|\d{1,2}[./-]\d{1,2}[./-]\d{4}(?:\s*,?\s*(?:o\s*)?\d{1,2}:\d{2})?|\d{1,2}\s+[A-Za-ząćęłńóśźżĄĆĘŁŃÓŚŹŻ]+\s+\d{4}(?:\s*,?\s*(?:o\s*)?\d{1,2}:\d{2})?)/i,
+    )?.[1];
     const visibleParameters: Array<[string, RegExp]> = [
       ['Rok produkcji', /Rok produkcji:\s*([^\n]+)/i],
       ['Przebieg', /Przebieg:\s*([^\n]+)/i],
@@ -372,7 +408,9 @@ async function extractPayload(page: Page): Promise<PagePayload> {
       declaredSellerType,
       primaryImageUrl:
         helpers.clean(image) || helpers.meta('meta[property="og:image"]') || undefined,
+      publicationDateText:
+        structuredPublicationDate || selectorPublicationDate || visiblePublicationDate || undefined,
       attributes,
     };
-  });
+  }, publicationSelectors);
 }

@@ -18,6 +18,7 @@ describe('normalizeListing', () => {
       gearbox: 'automatic',
       driveType: 'rwd',
       vin: 'WBAVT71090A123456',
+      publishedAt: '2026-08-07T06:30:00.000Z',
     });
     expect(listing.url).not.toContain('utm_source');
   });

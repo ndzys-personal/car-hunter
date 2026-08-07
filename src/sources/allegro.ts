@@ -10,4 +10,13 @@ export class AllegroAdapter extends PlaywrightMarketplaceAdapter {
   protected externalId(url: URL): string {
     return url.pathname.match(/-(\d{8,})$/)?.[1] ?? url.pathname.split('/').at(-1) ?? url.pathname;
   }
+
+  protected publicationDateSelectors(): string[] {
+    return [
+      '[data-testid*="publication" i]',
+      '[data-box-name*="publication" i]',
+      '[data-testid*="offer-date" i]',
+      ...super.publicationDateSelectors(),
+    ];
+  }
 }

@@ -4,9 +4,11 @@ import type {
   ListingAnalysis,
   PersistedListing,
   RecommendedAction,
+  SearchProfile,
 } from '../domain/types.js';
 import type { DatabaseClient } from './client.js';
 import { sha256 } from '../services/hash.js';
+import { scoreListing } from '../services/scoring.js';
 
 export class CarHunterRepository {
   constructor(private readonly db: DatabaseClient) {}
@@ -80,12 +82,12 @@ export class CarHunterRepository {
 
   async upsertListing(
     listing: Listing,
-    score: DeterministicScore,
+    profile: SearchProfile,
     scanRunId: string,
-  ): Promise<PersistedListing> {
+  ): Promise<{ listing: PersistedListing; score: DeterministicScore }> {
     const { data: existing, error: existingError } = await this.db
       .from('listings')
-      .select('id, material_hash, price_pln, first_seen_at, last_seen_at')
+      .select('id, material_hash, price_pln, published_at, first_seen_at, last_seen_at')
       .eq('profile_id', listing.profileId)
       .eq('source', listing.source)
       .eq('source_listing_id', listing.sourceListingId)
@@ -93,11 +95,30 @@ export class CarHunterRepository {
     if (existingError) throw existingError;
 
     const sellerId = await this.upsertSeller(listing);
-    const row = { ...listingToRow(listing, score), seller_id: sellerId };
+    const timestamps = resolveListingTimestamps(
+      existing
+        ? {
+            firstSeenAt: String(existing.first_seen_at),
+            lastSeenAt: String(existing.last_seen_at),
+            publishedAt: typeof existing.published_at === 'string' ? existing.published_at : null,
+          }
+        : null,
+      listing.scrapedAt,
+      listing.publishedAt,
+    );
+    const effectiveListing = { ...listing, publishedAt: timestamps.publishedAt };
+    const score = scoreListing(effectiveListing, profile);
+    const row: Record<string, unknown> = {
+      ...listingToRow(effectiveListing, score),
+      seller_id: sellerId,
+      published_at: timestamps.publishedAt,
+      last_seen_at: timestamps.lastSeenAt,
+    };
+    if (!existing) row.first_seen_at = timestamps.firstSeenAt;
     const { data, error } = await this.db
       .from('listings')
       .upsert(row, { onConflict: 'profile_id,source,source_listing_id' })
-      .select('id, first_seen_at, last_seen_at')
+      .select('id, published_at, first_seen_at, last_seen_at')
       .single();
     if (error) throw error;
 
@@ -119,14 +140,18 @@ export class CarHunterRepository {
     }
 
     return {
-      ...listing,
-      id: data.id as string,
-      firstSeenAt: data.first_seen_at as string,
-      lastSeenAt: data.last_seen_at as string,
-      previousMaterialHash: (existing?.material_hash as string | undefined) ?? null,
-      previousPricePln: (existing?.price_pln as number | undefined) ?? null,
-      isNew,
-      materiallyChanged,
+      score,
+      listing: {
+        ...effectiveListing,
+        publishedAt: typeof data.published_at === 'string' ? data.published_at : null,
+        id: data.id as string,
+        firstSeenAt: data.first_seen_at as string,
+        lastSeenAt: data.last_seen_at as string,
+        previousMaterialHash: (existing?.material_hash as string | undefined) ?? null,
+        previousPricePln: (existing?.price_pln as number | undefined) ?? null,
+        isNew,
+        materiallyChanged,
+      },
     };
   }
 
@@ -308,12 +333,13 @@ function listingToRow(listing: Listing, score: DeterministicScore) {
     seller_name: listing.sellerName,
     declared_seller_type: listing.declaredSellerType,
     primary_image_url: listing.primaryImageUrl,
+    published_at: listing.publishedAt,
     raw_attributes: listing.rawAttributes,
     material_hash: listing.materialHash,
     deterministic_score: score.totalScore,
     deterministic_breakdown: score.breakdown,
     deterministic_rejected: score.rejected,
-    last_seen_at: new Date().toISOString(),
+    last_seen_at: listing.scrapedAt,
     updated_at: new Date().toISOString(),
   };
 }
@@ -372,6 +398,7 @@ function persistedListingFromRow(row: Record<string, unknown>): PersistedListing
     sellerName: nullableString(row.seller_name),
     declaredSellerType: row.declared_seller_type as PersistedListing['declaredSellerType'],
     primaryImageUrl: nullableString(row.primary_image_url),
+    publishedAt: nullableString(row.published_at),
     rawAttributes: (row.raw_attributes ?? {}) as Record<string, string>,
     materialHash: String(row.material_hash),
     scrapedAt: String(row.last_seen_at),
@@ -382,6 +409,57 @@ function persistedListingFromRow(row: Record<string, unknown>): PersistedListing
     isNew: false,
     materiallyChanged: false,
   };
+}
+
+export interface ListingTimestamps {
+  publishedAt: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+export function resolveListingTimestamps(
+  existing: ListingTimestamps | null,
+  observedAt: string,
+  candidatePublishedAt: string | null,
+): ListingTimestamps {
+  const observed = validIso(observedAt);
+  if (!observed) throw new Error(`Invalid listing observation timestamp: ${observedAt}`);
+  const rawCandidatePublished = validIso(candidatePublishedAt);
+  const candidatePublished =
+    rawCandidatePublished && new Date(rawCandidatePublished) <= new Date(observed)
+      ? rawCandidatePublished
+      : null;
+  if (!existing) {
+    return {
+      publishedAt: candidatePublished,
+      firstSeenAt: observed,
+      lastSeenAt: observed,
+    };
+  }
+  const existingFirstSeen = validIso(existing.firstSeenAt) ?? observed;
+  const existingLastSeen = validIso(existing.lastSeenAt) ?? observed;
+  const existingPublished = validIso(existing.publishedAt);
+  return {
+    publishedAt: earliest(existingPublished, candidatePublished),
+    firstSeenAt: existingFirstSeen,
+    lastSeenAt: latest(existingLastSeen, observed),
+  };
+}
+
+function validIso(value: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function earliest(left: string | null, right: string | null): string | null {
+  if (!left) return right;
+  if (!right) return left;
+  return new Date(left) <= new Date(right) ? left : right;
+}
+
+function latest(left: string, right: string): string {
+  return new Date(left) >= new Date(right) ? left : right;
 }
 
 function nullableNumber(value: unknown): number | null {

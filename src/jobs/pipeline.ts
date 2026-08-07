@@ -6,7 +6,6 @@ import { CarHunterRepository } from '../db/repository.js';
 import type { SourceName } from '../domain/types.js';
 import { normalizeListing } from '../services/normalization.js';
 import { logger } from '../services/logger.js';
-import { scoreListing } from '../services/scoring.js';
 import { createAdapters } from '../sources/index.js';
 import { TelegramService } from '../telegram/telegram.js';
 
@@ -54,8 +53,9 @@ export async function runPipeline(
           for (const raw of rawListings) {
             try {
               const listing = normalizeListing(raw, profile);
-              const score = scoreListing(listing, profile);
-              const persisted = await repository.upsertListing(listing, score, runId);
+              const persistedResult = await repository.upsertListing(listing, profile, runId);
+              const persisted = persistedResult.listing;
+              const score = persistedResult.score;
               counts.processed += 1;
 
               const eligibleForAi =
@@ -79,7 +79,7 @@ export async function runPipeline(
                 persisted.materiallyChanged ||
                 hasOlderPromptAnalysis;
               if (!needsAnalysis) continue;
-              const analysis = cached ?? (await aiProvider.analyze(listing, profile, score));
+              const analysis = cached ?? (await aiProvider.analyze(persisted, profile, score));
               const analysisId = await repository.saveAnalysis(
                 persisted.id,
                 persisted.materialHash,
@@ -89,8 +89,7 @@ export async function runPipeline(
                 analysis,
               );
 
-              if (options.mode === 'baseline' || !telegram || !isNotificationEvent(persisted.isNew))
-                continue;
+              if (!telegram || !shouldAttemptTelegram(options.mode, persisted.isNew)) continue;
               const alreadyNotified = await repository.wasNotified(
                 persisted.id,
                 persisted.materialHash,
@@ -165,6 +164,10 @@ export function isMeaningfulPriceDrop(previous: number | null, current: number |
 
 export function isNotificationEvent(isNew: boolean): boolean {
   return isNew;
+}
+
+export function shouldAttemptTelegram(mode: PipelineOptions['mode'], isNew: boolean): boolean {
+  return mode === 'scan' && isNotificationEvent(isNew);
 }
 
 export function shouldNotify(

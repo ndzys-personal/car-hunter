@@ -80,6 +80,7 @@ export function normalizeListing(raw: RawListing, profile: SearchProfile): Listi
     sellerName: raw.sellerName ?? null,
     declaredSellerType,
     primaryImageUrl: raw.primaryImageUrl ?? null,
+    publishedAt: raw.publishedAt,
     rawAttributes: raw.attributes,
     materialHash: sha256(material),
     deduplicationKey: buildDeduplicationKey(raw.source, raw.externalId, vin, raw.url),

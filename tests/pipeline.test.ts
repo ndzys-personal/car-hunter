@@ -3,6 +3,7 @@ import {
   canCompleteBaseline,
   isMeaningfulPriceDrop,
   isNotificationEvent,
+  shouldAttemptTelegram,
   shouldNotify,
 } from '../src/jobs/pipeline.js';
 
@@ -23,6 +24,13 @@ describe('price-change notification logic', () => {
   it('allows Telegram only for newly discovered listings', () => {
     expect(isNotificationEvent(true)).toBe(true);
     expect(isNotificationEvent(false)).toBe(false);
+  });
+
+  it('never notifies for baseline imports and can notify new post-baseline listings', () => {
+    expect(shouldAttemptTelegram('baseline', true)).toBe(false);
+    expect(shouldAttemptTelegram('baseline', false)).toBe(false);
+    expect(shouldAttemptTelegram('scan', false)).toBe(false);
+    expect(shouldAttemptTelegram('scan', true)).toBe(true);
   });
 
   it('completes only a full, successful, non-empty baseline', () => {

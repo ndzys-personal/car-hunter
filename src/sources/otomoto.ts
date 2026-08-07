@@ -14,4 +14,13 @@ export class OtomotoAdapter extends PlaywrightMarketplaceAdapter {
       url.pathname
     );
   }
+
+  protected publicationDateSelectors(): string[] {
+    return [
+      '[data-testid="advertisement-created-at"]',
+      '[data-testid*="publication-date" i]',
+      '[data-testid*="created-at" i]',
+      ...super.publicationDateSelectors(),
+    ];
+  }
 }

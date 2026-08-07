@@ -24,6 +24,11 @@ export const searchProfiles: SearchProfile[] = [
       awdPenalty: 8,
       touringPracticalityBonus: 5,
       neutralFeatures: ['M-pakiet'],
+      freshness: {
+        windowHours: 72,
+        within24HoursBonus: 4,
+        within72HoursBonus: 2,
+      },
     },
     sources: {
       otomoto: source('otomoto', 'E91'),
@@ -47,6 +52,11 @@ export const searchProfiles: SearchProfile[] = [
       awdPenalty: 8,
       touringPracticalityBonus: 5,
       neutralFeatures: ['M-pakiet'],
+      freshness: {
+        windowHours: 72,
+        within24HoursBonus: 4,
+        within72HoursBonus: 2,
+      },
     },
     sources: {
       otomoto: source('otomoto', 'E61'),

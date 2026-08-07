@@ -27,6 +27,11 @@ export interface SearchProfile {
     awdPenalty: number;
     touringPracticalityBonus: number;
     neutralFeatures: string[];
+    freshness: {
+      windowHours: number;
+      within24HoursBonus: number;
+      within72HoursBonus: number;
+    };
   };
   sources: Record<SourceName, SearchSourceConfig>;
 }
@@ -42,6 +47,7 @@ export interface RawListing {
   sellerName?: string;
   declaredSellerType?: SellerType;
   primaryImageUrl?: string;
+  publishedAt: string | null;
   attributes: Record<string, string>;
   scrapedAt: string;
 }
@@ -76,6 +82,7 @@ export interface Listing {
   sellerName: string | null;
   declaredSellerType: SellerType;
   primaryImageUrl: string | null;
+  publishedAt: string | null;
   rawAttributes: Record<string, string>;
   materialHash: string;
   deduplicationKey: string;
@@ -93,6 +100,7 @@ export interface ScoreBreakdown {
   drivetrain: number;
   seller: number;
   dataQuality: number;
+  freshness: number;
 }
 
 export interface DeterministicScore {

@@ -14,4 +14,13 @@ export class OlxAdapter extends PlaywrightMarketplaceAdapter {
       url.pathname
     );
   }
+
+  protected publicationDateSelectors(): string[] {
+    return [
+      '[data-testid="ad-posted-at"]',
+      '[data-testid*="posting-date" i]',
+      '[data-cy="ad-posted-at"]',
+      ...super.publicationDateSelectors(),
+    ];
+  }
 }

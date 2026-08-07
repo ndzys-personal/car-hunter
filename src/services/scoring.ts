@@ -5,6 +5,7 @@ import type {
   SearchProfile,
 } from '../domain/types.js';
 import { inferEngine } from './engine-inference.js';
+import { scoreFreshness } from './freshness.js';
 
 export function scoreListing(listing: Listing, profile: SearchProfile): DeterministicScore {
   const reasons: string[] = [];
@@ -25,6 +26,7 @@ export function scoreListing(listing: Listing, profile: SearchProfile): Determin
         : 0;
   const seller = 0;
   const dataQuality = scoreDataQuality(listing);
+  const freshness = scoreFreshness(listing, profile);
   const breakdown: ScoreBreakdown = {
     profileFit,
     bodyStyleBonus,
@@ -36,6 +38,7 @@ export function scoreListing(listing: Listing, profile: SearchProfile): Determin
     drivetrain,
     seller,
     dataQuality,
+    freshness,
   };
   const bodyMatches = matchesAllowedBody(listing, profile);
   const generationMatches =
@@ -59,6 +62,7 @@ export function scoreListing(listing: Listing, profile: SearchProfile): Determin
   if (listing.bodyType === 'Touring') reasons.push('Touring: mały bonus za praktyczność.');
   if (listing.driveType === 'rwd') reasons.push('RWD jest zgodne z preferencjami.');
   if (listing.driveType === 'awd') reasons.push('xDrive: kara za dodatkową złożoność napędu.');
+  if (freshness > 0) reasons.push(`Świeże ogłoszenie: mały bonus +${freshness}.`);
 
   return {
     totalScore: rejected ? Math.min(49, sum(breakdown)) : Math.min(100, sum(breakdown)),
@@ -140,7 +144,8 @@ function sum(breakdown: ScoreBreakdown): number {
     breakdown.transmission +
     breakdown.drivetrain +
     breakdown.seller +
-    breakdown.dataQuality
+    breakdown.dataQuality +
+    breakdown.freshness
   );
 }
 

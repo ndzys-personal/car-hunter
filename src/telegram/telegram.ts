@@ -1,4 +1,5 @@
 import type { ListingAnalysis, PersistedListing } from '../domain/types.js';
+import { formatPolishRelativeTimestamp } from '../services/publication-date.js';
 
 interface TelegramResponse<T> {
   ok: boolean;
@@ -55,6 +56,7 @@ export function formatMessage(
   listing: PersistedListing,
   analysis: ListingAnalysis,
   priceChanged: boolean,
+  now: Date = new Date(),
 ): string {
   const priority = recommendationLabel(analysis);
   const change = priceChanged ? ' · 📉 ZMIANA CENY' : '';
@@ -82,6 +84,15 @@ export function formatMessage(
   const verification = analysis.verificationItems
     .slice(0, 4)
     .map((item) => `• ${escapeHtml(item)}`);
+  const freshness = listing.publishedAt
+    ? [
+        `🕐 Opublikowano: ${formatPolishRelativeTimestamp(listing.publishedAt, now)}`,
+        `👁 Wykryto: ${formatPolishRelativeTimestamp(listing.firstSeenAt, now)}`,
+      ]
+    : [
+        '🕐 Data publikacji: brak danych',
+        `👁 Pierwszy raz wykryto: ${formatPolishRelativeTimestamp(listing.firstSeenAt, now)}`,
+      ];
 
   return [
     `<b>${priority} — ${analysis.totalScore}/100${change}</b>`,
@@ -90,6 +101,8 @@ export function formatMessage(
     listing.pricePln ? `${formatNumber(listing.pricePln)} zł` : 'Cena niepodana',
     '',
     ...facts,
+    '',
+    ...freshness,
     '',
     '<b>✅ Plusy</b>',
     ...(positives.length ? positives : ['• Brak potwierdzonych mocnych stron']),

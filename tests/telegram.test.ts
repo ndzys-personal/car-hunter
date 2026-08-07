@@ -51,6 +51,51 @@ describe('Telegram formatting', () => {
     expect(message).toContain('N52B25 (94%)');
     expect(message).toContain('Sprawdź przed wizytą');
     expect(message).toContain('skontaktuj się ze sprzedawcą');
+    expect(message).toContain('Opublikowano:');
+    expect(message).toContain('Wykryto:');
+  });
+
+  it('shows publication and discovery times, including an unavailable publication date', () => {
+    const base = normalizeListing(rawListing(), searchProfiles[0]!);
+    const listing: PersistedListing = {
+      ...base,
+      id: 'listing-id',
+      firstSeenAt: '2026-08-07T08:00:00.000Z',
+      lastSeenAt: '2026-08-07T12:00:00.000Z',
+      previousMaterialHash: null,
+      previousPricePln: null,
+      isNew: true,
+      materiallyChanged: false,
+    };
+    const analysis: ListingAnalysis = {
+      sellerDeclaredType: 'private',
+      sellerInferredType: 'private',
+      sellerConfidence: 0.6,
+      sellerSignals: [],
+      likelyEngine: 'N52B25',
+      engineConfidence: 0.9,
+      analysisConfidence: 0.9,
+      majorUncertainties: [],
+      fitScore: 85,
+      riskScore: 20,
+      totalScore: 78,
+      priceAssessment: 'Cena mieści się w budżecie.',
+      positives: [],
+      redFlags: [],
+      questionsForSeller: [],
+      verificationItems: ['Sprawdzić VIN.', 'Sprawdzić faktury.'],
+      summary: 'Kandydat.',
+      verdict: 'Warto zadzwonić.',
+      recommendedAction: 'call',
+    };
+    const now = new Date('2026-08-07T13:00:00.000Z');
+    const known = formatMessage(listing, analysis, false, now);
+    expect(known).toContain('🕐 Opublikowano: dzisiaj, 08:30');
+    expect(known).toContain('👁 Wykryto: dzisiaj, 10:00');
+
+    const unknown = formatMessage({ ...listing, publishedAt: null }, analysis, false, now);
+    expect(unknown).toContain('🕐 Data publikacji: brak danych');
+    expect(unknown).toContain('👁 Pierwszy raz wykryto: dzisiaj, 10:00');
   });
 
   it('uses staged labels and reserves PILNE for high-confidence analyses', () => {

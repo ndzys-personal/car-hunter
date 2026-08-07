@@ -1,0 +1,49 @@
+name: Car Hunter scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'
+
+concurrency:
+  group: car-hunter-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm scan
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OTOMOTO_E91_URL: ${{ vars.OTOMOTO_E91_URL }}
+          OTOMOTO_E61_URL: ${{ vars.OTOMOTO_E61_URL }}
+          OLX_E91_URL: ${{ vars.OLX_E91_URL }}
+          OLX_E61_URL: ${{ vars.OLX_E61_URL }}
+          ALLEGRO_E91_URL: ${{ vars.ALLEGRO_E91_URL }}
+          ALLEGRO_E61_URL: ${{ vars.ALLEGRO_E61_URL }}
+          HEADLESS: 'true'
+          MAX_LISTINGS_PER_SOURCE: ${{ vars.MAX_LISTINGS_PER_SOURCE || '100' }}
+          MAX_SEARCH_PAGES: ${{ vars.MAX_SEARCH_PAGES || '10' }}
+          DETAIL_CONCURRENCY: ${{ vars.DETAIL_CONCURRENCY || '3' }}
+          AI_SCORE_THRESHOLD: ${{ vars.AI_SCORE_THRESHOLD || '55' }}
+          NOTIFICATION_SCORE_THRESHOLD: ${{ vars.NOTIFICATION_SCORE_THRESHOLD || '70' }}

@@ -1,0 +1,52 @@
+import { z } from 'zod';
+
+export const rawListingAnalysisSchema = z.object({
+  sellerType: z.enum(['private', 'dealer', 'uncertain']),
+  sellerConfidence: z.number().min(0).max(1),
+  likelyEngine: z.enum(['N52B25', 'N52B30', 'M57', 'unknown']),
+  engineConfidence: z.number().min(0).max(1),
+  fitScore: z.number().int().min(0).max(100),
+  riskScore: z.number().int().min(0).max(100),
+  priceAssessment: z.string(),
+  positives: z.array(z.string()).max(8),
+  redFlags: z.array(z.string()).max(8),
+  questionsForSeller: z.array(z.string()).max(10),
+  summary: z.string(),
+  verdict: z.string(),
+  recommendedAction: z.enum(['ignore', 'review', 'call', 'inspect']),
+});
+
+export const rawListingAnalysisJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    sellerType: { type: 'string', enum: ['private', 'dealer', 'uncertain'] },
+    sellerConfidence: { type: 'number', minimum: 0, maximum: 1 },
+    likelyEngine: { type: 'string', enum: ['N52B25', 'N52B30', 'M57', 'unknown'] },
+    engineConfidence: { type: 'number', minimum: 0, maximum: 1 },
+    fitScore: { type: 'integer', minimum: 0, maximum: 100 },
+    riskScore: { type: 'integer', minimum: 0, maximum: 100 },
+    priceAssessment: { type: 'string', description: 'Natural Polish text.' },
+    positives: { type: 'array', items: { type: 'string' }, maxItems: 8 },
+    redFlags: { type: 'array', items: { type: 'string' }, maxItems: 8 },
+    questionsForSeller: { type: 'array', items: { type: 'string' }, maxItems: 10 },
+    summary: { type: 'string', description: 'Natural Polish text.' },
+    verdict: { type: 'string', description: 'Natural Polish text.' },
+    recommendedAction: { type: 'string', enum: ['ignore', 'review', 'call', 'inspect'] },
+  },
+  required: [
+    'sellerType',
+    'sellerConfidence',
+    'likelyEngine',
+    'engineConfidence',
+    'fitScore',
+    'riskScore',
+    'priceAssessment',
+    'positives',
+    'redFlags',
+    'questionsForSeller',
+    'summary',
+    'verdict',
+    'recommendedAction',
+  ],
+} as const;

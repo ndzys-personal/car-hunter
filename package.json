@@ -1,0 +1,44 @@
+{
+  "name": "car-hunter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "baseline": "tsx src/jobs/baseline.ts",
+    "scan": "tsx src/jobs/scan.ts",
+    "telegram:chat-id": "tsx src/telegram/get-chat-id.ts",
+    "telegram:test": "tsx src/telegram/send-test.ts",
+    "test:telegram": "tsx src/telegram/send-test.ts",
+    "analyze": "tsx src/jobs/analyze.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@google/genai": "^2.16.0",
+    "@supabase/supabase-js": "^2.112.1",
+    "dotenv": "^17.4.2",
+    "pino": "^10.3.1",
+    "playwright": "^1.62.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.0.0",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.9.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.9",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.66.0",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "pnpm@10.15.0"
+}

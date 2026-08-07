@@ -1,0 +1,197 @@
+import type { RuntimeConfig } from '../config/env.js';
+import { enabledSearchScopes, searchProfiles } from '../config/searches.js';
+import { LISTING_ANALYSIS_PROMPT_VERSION } from '../ai/prompts/listing-analysis.js';
+import type { AiProvider } from '../ai/provider.js';
+import { CarHunterRepository } from '../db/repository.js';
+import type { SourceName } from '../domain/types.js';
+import { normalizeListing } from '../services/normalization.js';
+import { logger } from '../services/logger.js';
+import { scoreListing } from '../services/scoring.js';
+import { createAdapters } from '../sources/index.js';
+import { TelegramService } from '../telegram/telegram.js';
+
+export interface PipelineOptions {
+  mode: 'baseline' | 'scan';
+  skipAi: boolean;
+  source?: SourceName;
+  profile?: string;
+}
+
+export async function runPipeline(
+  config: RuntimeConfig,
+  repository: CarHunterRepository,
+  options: PipelineOptions,
+  aiProvider?: AiProvider,
+  telegram?: TelegramService,
+): Promise<void> {
+  const runId = await repository.startRun(options.mode, { ...options });
+  const counts = { discovered: 0, processed: 0, errors: 0 };
+  const adapters = createAdapters({
+    headless: config.HEADLESS,
+    maxListings: config.MAX_LISTINGS_PER_SOURCE,
+    maxSearchPages: config.MAX_SEARCH_PAGES,
+    detailConcurrency: config.DETAIL_CONCURRENCY,
+  });
+
+  try {
+    const profiles = searchProfiles.filter(
+      (profile) => !options.profile || profile.id === options.profile,
+    );
+    for (const profile of profiles) {
+      for (const sourceName of Object.keys(profile.sources) as SourceName[]) {
+        if (options.source && options.source !== sourceName) continue;
+        const sourceConfig = profile.sources[sourceName];
+        if (!sourceConfig.enabled) continue;
+
+        try {
+          const fetchResult = await adapters[sourceName].fetchListings(
+            profile,
+            sourceConfig.searchUrl,
+          );
+          const rawListings = fetchResult.listings;
+          counts.errors += fetchResult.errors;
+          counts.discovered += rawListings.length;
+          for (const raw of rawListings) {
+            try {
+              const listing = normalizeListing(raw, profile);
+              const score = scoreListing(listing, profile);
+              const persisted = await repository.upsertListing(listing, score, runId);
+              counts.processed += 1;
+
+              const eligibleForAi =
+                !options.skipAi &&
+                aiProvider &&
+                !score.rejected &&
+                score.totalScore >= config.AI_SCORE_THRESHOLD;
+              if (!eligibleForAi || !aiProvider) continue;
+
+              const cached = await repository.getCachedAnalysis(
+                persisted.id,
+                persisted.materialHash,
+                LISTING_ANALYSIS_PROMPT_VERSION,
+              );
+              const hasOlderPromptAnalysis = cached
+                ? false
+                : await repository.hasAnalysisForMaterial(persisted.id, persisted.materialHash);
+              const needsAnalysis =
+                options.mode === 'baseline' ||
+                persisted.isNew ||
+                persisted.materiallyChanged ||
+                hasOlderPromptAnalysis;
+              if (!needsAnalysis) continue;
+              const analysis = cached ?? (await aiProvider.analyze(listing, profile, score));
+              const analysisId = await repository.saveAnalysis(
+                persisted.id,
+                persisted.materialHash,
+                aiProvider.name,
+                aiProvider.model,
+                LISTING_ANALYSIS_PROMPT_VERSION,
+                analysis,
+              );
+
+              if (
+                options.mode === 'baseline' ||
+                !telegram ||
+                (!persisted.isNew && !persisted.materiallyChanged)
+              )
+                continue;
+              const alreadyNotified = await repository.wasNotified(
+                persisted.id,
+                persisted.materialHash,
+              );
+              if (shouldNotify(analysis, config.NOTIFICATION_SCORE_THRESHOLD, alreadyNotified)) {
+                const priceChanged = isMeaningfulPriceDrop(
+                  persisted.previousPricePln,
+                  persisted.pricePln,
+                );
+                try {
+                  const messageId = await telegram.sendRecommendedListing(
+                    persisted,
+                    analysis,
+                    priceChanged,
+                  );
+                  await repository.saveNotification({
+                    listingId: persisted.id,
+                    analysisId,
+                    materialHash: persisted.materialHash,
+                    reason: priceChanged
+                      ? 'meaningful_price_drop'
+                      : persisted.isNew
+                        ? 'new_listing'
+                        : 'material_change',
+                    totalScore: analysis.totalScore,
+                    recommendedAction: analysis.recommendedAction,
+                    telegramMessageId: messageId,
+                  });
+                } catch (error) {
+                  counts.errors += 1;
+                  logger.error(
+                    { error, listingId: persisted.id },
+                    'Telegram notification failed; scan continues',
+                  );
+                }
+              }
+            } catch (error) {
+              counts.errors += 1;
+              logger.error(
+                { error, source: sourceName, url: raw.url },
+                'Listing processing failed',
+              );
+            }
+          }
+        } catch (error) {
+          counts.errors += 1;
+          logger.error(
+            { error, source: sourceName, profile: profile.id },
+            'Source failed; other sources continue',
+          );
+        }
+      }
+    }
+
+    const baselineCanComplete = canCompleteBaseline(options, counts);
+    if (baselineCanComplete) await repository.markBaselineCompleted(enabledSearchScopes());
+    if (options.mode === 'baseline' && !baselineCanComplete) {
+      logger.warn(
+        { ...counts, filtered: Boolean(options.source || options.profile) },
+        'Baseline data was stored, but global baseline state was not completed',
+      );
+    }
+    await repository.finishRun(runId, counts.errors > 0 ? 'partial' : 'completed', counts);
+    logger.info({ runId, mode: options.mode, ...counts }, 'Car Hunter run completed');
+  } catch (error) {
+    await repository.finishRun(runId, 'failed', counts).catch(() => undefined);
+    throw error;
+  }
+}
+
+export function isMeaningfulPriceDrop(previous: number | null, current: number | null): boolean {
+  if (previous === null || current === null || current >= previous) return false;
+  const drop = previous - current;
+  return drop >= 1_000 || drop / previous >= 0.03;
+}
+
+export function shouldNotify(
+  analysis: { totalScore: number; recommendedAction: string },
+  threshold: number,
+  alreadyNotified: boolean,
+): boolean {
+  return (
+    ['call', 'inspect'].includes(analysis.recommendedAction) &&
+    analysis.totalScore >= threshold &&
+    !alreadyNotified
+  );
+}
+
+export function canCompleteBaseline(
+  options: PipelineOptions,
+  counts: { processed: number; errors: number },
+): boolean {
+  return (
+    options.mode === 'baseline' &&
+    !options.source &&
+    !options.profile &&
+    counts.errors === 0 &&
+    counts.processed > 0
+  );
+}

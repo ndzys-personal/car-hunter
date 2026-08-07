@@ -5,8 +5,6 @@ on:
   schedule:
     # Avoid GitHub Actions scheduler congestion at :00 and :30 (UTC).
     - cron: '7,37 * * * *'
-    # Temporary diagnostic trigger; remove after the first scheduled run is confirmed.
-    - cron: '*/5 * * * *'
 
 concurrency:
   group: car-hunter-scan

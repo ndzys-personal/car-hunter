@@ -5,10 +5,12 @@ import type {
   PersistedListing,
   RecommendedAction,
   SearchProfile,
+  SellerHistory,
 } from '../domain/types.js';
 import type { DatabaseClient } from './client.js';
 import { sha256 } from '../services/hash.js';
 import { scoreListing } from '../services/scoring.js';
+import { detectSellerType } from '../services/seller-detection.js';
 
 export class CarHunterRepository {
   constructor(private readonly db: DatabaseClient) {}
@@ -94,7 +96,7 @@ export class CarHunterRepository {
       .maybeSingle();
     if (existingError) throw existingError;
 
-    const sellerId = await this.upsertSeller(listing);
+    const seller = await this.upsertSeller(listing);
     const timestamps = resolveListingTimestamps(
       existing
         ? {
@@ -106,11 +108,15 @@ export class CarHunterRepository {
       listing.scrapedAt,
       listing.publishedAt,
     );
-    const effectiveListing = { ...listing, publishedAt: timestamps.publishedAt };
+    const effectiveListing = {
+      ...listing,
+      publishedAt: timestamps.publishedAt,
+      sellerHistory: seller?.history ?? listing.sellerHistory,
+    };
     const score = scoreListing(effectiveListing, profile);
     const row: Record<string, unknown> = {
       ...listingToRow(effectiveListing, score),
-      seller_id: sellerId,
+      seller_id: seller?.id ?? null,
       published_at: timestamps.publishedAt,
       last_seen_at: timestamps.lastSeenAt,
     };
@@ -206,6 +212,7 @@ export class CarHunterRepository {
           seller_inferred_type: analysis.sellerInferredType,
           seller_confidence: analysis.sellerConfidence,
           seller_signals: analysis.sellerSignals,
+          seller_risk_explanation: analysis.sellerRiskExplanation,
           likely_engine: analysis.likelyEngine,
           engine_confidence: analysis.engineConfidence,
           analysis_confidence: analysis.analysisConfidence,
@@ -241,6 +248,7 @@ export class CarHunterRepository {
           likely_type: analysis.sellerInferredType,
           confidence: analysis.sellerConfidence,
           signals: analysis.sellerSignals,
+          risk_explanation: analysis.sellerRiskExplanation,
           last_seen_at: new Date().toISOString(),
         })
         .eq('id', listingRow.seller_id);
@@ -249,29 +257,85 @@ export class CarHunterRepository {
     return data.id as string;
   }
 
-  private async upsertSeller(listing: Listing): Promise<string | null> {
-    if (!listing.sellerName) return null;
-    const normalizedName = listing.sellerName.toLocaleLowerCase('pl').replace(/\s+/g, ' ').trim();
-    const sourceSellerId =
-      listing.declaredSellerType === 'dealer'
+  private async upsertSeller(
+    listing: Listing,
+  ): Promise<{ id: string; history: SellerHistory } | null> {
+    if (!listing.sellerName && !listing.sourceSellerId) return null;
+    const normalizedName = (listing.sellerName ?? '')
+      .toLocaleLowerCase('pl')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const sourceSellerId = listing.sourceSellerId
+      ? `public:${sha256(listing.sourceSellerId).slice(0, 32)}`
+      : listing.declaredSellerType === 'dealer' && normalizedName
         ? `name:${sha256(normalizedName).slice(0, 24)}`
         : `listing:${listing.sourceListingId}`;
+    const observedAt = listing.scrapedAt;
+    const sellerRow = {
+      source: listing.source,
+      source_seller_id: sourceSellerId,
+      declared_type: listing.declaredSellerType,
+      last_seen_at: observedAt,
+      ...(listing.sellerName ? { name: listing.sellerName } : {}),
+      ...(listing.currentActiveVehicleCount !== null
+        ? { current_active_vehicle_count: listing.currentActiveVehicleCount }
+        : {}),
+      ...(listing.sellerCompanyName ? { company_name: listing.sellerCompanyName } : {}),
+      ...(listing.sellerAccountAgeText ? { account_age_text: listing.sellerAccountAgeText } : {}),
+      ...(listing.sellerBusinessSignals.length
+        ? { business_signals: listing.sellerBusinessSignals }
+        : {}),
+    };
     const { data, error } = await this.db
       .from('sellers')
-      .upsert(
-        {
-          source: listing.source,
-          source_seller_id: sourceSellerId,
-          name: listing.sellerName,
-          declared_type: listing.declaredSellerType,
-          last_seen_at: new Date().toISOString(),
-        },
-        { onConflict: 'source,source_seller_id' },
-      )
+      .upsert(sellerRow, { onConflict: 'source,source_seller_id' })
       .select('id')
       .single();
     if (error) throw error;
-    return data.id as string;
+    const sellerId = data.id as string;
+    const { error: historyError } = await this.db.from('seller_listing_history').upsert(
+      {
+        seller_id: sellerId,
+        source_listing_id: listing.sourceListingId,
+        make: listing.make,
+        model: listing.model,
+        last_seen_at: observedAt,
+      },
+      { onConflict: 'seller_id,source_listing_id' },
+    );
+    if (historyError) throw historyError;
+    const { data: historyRows, error: historyReadError } = await this.db
+      .from('seller_listing_history')
+      .select('make, first_seen_at, last_seen_at')
+      .eq('seller_id', sellerId);
+    if (historyReadError) throw historyReadError;
+    const rows = (historyRows ?? []) as Array<{
+      make: string | null;
+      first_seen_at: string;
+      last_seen_at: string;
+    }>;
+    const history: SellerHistory = {
+      currentActiveVehicleCount: listing.currentActiveVehicleCount,
+      historicalVehicleCount: rows.length,
+      uniqueMakesCount: new Set(rows.map((row) => row.make).filter(Boolean)).size,
+      firstSeenSellerAt: earliestDate(rows.map((row) => row.first_seen_at)),
+      lastSeenSellerAt: latestDate(rows.map((row) => row.last_seen_at)),
+    };
+    const assessment = detectSellerType({ ...listing, sellerHistory: history });
+    const { error: sellerProfileError } = await this.db
+      .from('sellers')
+      .update({
+        likely_type: assessment.inferredType,
+        confidence: assessment.confidence,
+        signals: assessment.signals,
+        risk_explanation: assessment.riskExplanation,
+        historical_vehicle_count: history.historicalVehicleCount,
+        unique_makes_count: history.uniqueMakesCount,
+        last_seen_at: observedAt,
+      })
+      .eq('id', sellerId);
+    if (sellerProfileError) throw sellerProfileError;
+    return { id: sellerId, history };
   }
 
   async wasNotified(listingId: string, materialHash: string): Promise<boolean> {
@@ -331,7 +395,18 @@ function listingToRow(listing: Listing, score: DeterministicScore) {
     vin: listing.vin,
     location: listing.location,
     seller_name: listing.sellerName,
+    source_seller_id: listing.sourceSellerId,
+    seller_profile_url: listing.sellerProfileUrl,
     declared_seller_type: listing.declaredSellerType,
+    seller_marketplace_data: {
+      currentActiveVehicleCount: listing.currentActiveVehicleCount,
+      otherVehicleMakes: listing.otherVehicleMakes,
+      otherVehicleIds: listing.otherVehicleIds,
+      accountAgeText: listing.sellerAccountAgeText,
+      companyName: listing.sellerCompanyName,
+      businessSignals: listing.sellerBusinessSignals,
+    },
+    seller_history: listing.sellerHistory,
     primary_image_url: listing.primaryImageUrl,
     published_at: listing.publishedAt,
     raw_attributes: listing.rawAttributes,
@@ -352,6 +427,8 @@ function analysisFromRow(row: Record<string, unknown>): ListingAnalysis {
       row.seller_type) as ListingAnalysis['sellerInferredType'],
     sellerConfidence: Number(row.seller_confidence),
     sellerSignals: (row.seller_signals ?? []) as string[],
+    sellerRiskExplanation:
+      nullableString(row.seller_risk_explanation) ?? 'Brak wystarczających danych o sprzedającym.',
     likelyEngine: String(row.likely_engine) as ListingAnalysis['likelyEngine'],
     engineConfidence: Number(row.engine_confidence),
     analysisConfidence: Number(row.analysis_confidence ?? 0.5),
@@ -396,7 +473,28 @@ function persistedListingFromRow(row: Record<string, unknown>): PersistedListing
     vin: nullableString(row.vin),
     location: nullableString(row.location),
     sellerName: nullableString(row.seller_name),
+    sourceSellerId: nullableString(row.source_seller_id),
+    sellerProfileUrl: nullableString(row.seller_profile_url),
     declaredSellerType: row.declared_seller_type as PersistedListing['declaredSellerType'],
+    currentActiveVehicleCount: nullableNumber(
+      (row.seller_marketplace_data as Record<string, unknown> | null)?.currentActiveVehicleCount,
+    ),
+    otherVehicleMakes: stringArray(
+      (row.seller_marketplace_data as Record<string, unknown> | null)?.otherVehicleMakes,
+    ),
+    otherVehicleIds: stringArray(
+      (row.seller_marketplace_data as Record<string, unknown> | null)?.otherVehicleIds,
+    ),
+    sellerAccountAgeText: nullableString(
+      (row.seller_marketplace_data as Record<string, unknown> | null)?.accountAgeText,
+    ),
+    sellerCompanyName: nullableString(
+      (row.seller_marketplace_data as Record<string, unknown> | null)?.companyName,
+    ),
+    sellerBusinessSignals: stringArray(
+      (row.seller_marketplace_data as Record<string, unknown> | null)?.businessSignals,
+    ),
+    sellerHistory: sellerHistoryFromRow(row),
     primaryImageUrl: nullableString(row.primary_image_url),
     publishedAt: nullableString(row.published_at),
     rawAttributes: (row.raw_attributes ?? {}) as Record<string, string>,
@@ -473,4 +571,34 @@ function nullableString(value: unknown): string | null {
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint')
     return String(value);
   return null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function earliestDate(values: string[]): string | null {
+  const valid = values.map((value) => validIso(value)).filter((value): value is string => !!value);
+  return valid.sort()[0] ?? null;
+}
+
+function latestDate(values: string[]): string | null {
+  const valid = values.map((value) => validIso(value)).filter((value): value is string => !!value);
+  return valid.sort().at(-1) ?? null;
+}
+
+function sellerHistoryFromRow(row: Record<string, unknown>): SellerHistory {
+  const stored = (row.seller_history ?? {}) as Record<string, unknown>;
+  const marketplace = (row.seller_marketplace_data ?? {}) as Record<string, unknown>;
+  return {
+    currentActiveVehicleCount: nullableNumber(
+      stored.currentActiveVehicleCount ?? marketplace.currentActiveVehicleCount,
+    ),
+    historicalVehicleCount: nullableNumber(stored.historicalVehicleCount) ?? 1,
+    uniqueMakesCount: nullableNumber(stored.uniqueMakesCount) ?? 1,
+    firstSeenSellerAt: nullableString(stored.firstSeenSellerAt),
+    lastSeenSellerAt: nullableString(stored.lastSeenSellerAt),
+  };
 }

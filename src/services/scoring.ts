@@ -6,6 +6,7 @@ import type {
 } from '../domain/types.js';
 import { inferEngine } from './engine-inference.js';
 import { scoreFreshness } from './freshness.js';
+import { detectSellerType, scoreSellerAssessment } from './seller-detection.js';
 
 export function scoreListing(listing: Listing, profile: SearchProfile): DeterministicScore {
   const reasons: string[] = [];
@@ -24,7 +25,8 @@ export function scoreListing(listing: Listing, profile: SearchProfile): Determin
       : listing.driveType === 'awd'
         ? -profile.preferences.awdPenalty
         : 0;
-  const seller = 0;
+  const sellerAssessment = detectSellerType(listing);
+  const seller = scoreSellerAssessment(sellerAssessment, profile.preferences.seller);
   const dataQuality = scoreDataQuality(listing);
   const freshness = scoreFreshness(listing, profile);
   const breakdown: ScoreBreakdown = {
@@ -63,6 +65,9 @@ export function scoreListing(listing: Listing, profile: SearchProfile): Determin
   if (listing.driveType === 'rwd') reasons.push('RWD jest zgodne z preferencjami.');
   if (listing.driveType === 'awd') reasons.push('xDrive: kara za dodatkową złożoność napędu.');
   if (freshness > 0) reasons.push(`Świeże ogłoszenie: mały bonus +${freshness}.`);
+  if (seller > 0) reasons.push('Profil sprzedającego wygląda na prywatny.');
+  if (seller < 0)
+    reasons.push('Profil sprzedającego wymaga większej ostrożności jak przy handlarzu.');
 
   return {
     totalScore: rejected ? Math.min(49, sum(breakdown)) : Math.min(100, sum(breakdown)),

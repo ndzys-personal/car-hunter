@@ -10,8 +10,9 @@ function rawAnalysis(overrides: Partial<RawListingAnalysis> = {}): RawListingAna
   return {
     sellerDeclaredType: 'private',
     sellerInferredType: 'private',
-    sellerConfidence: 0.95,
-    sellerSignals: [],
+    sellerConfidence: 0.15,
+    sellerSignals: ['Opis ma osobisty charakter.'],
+    sellerRiskExplanation: 'Opis wygląda na prywatny, ale wymaga weryfikacji.',
     likelyEngine: 'N52B30',
     engineConfidence: 0.95,
     analysisConfidence: 0.95,
@@ -75,8 +76,8 @@ describe('applyRecommendationPolicy', () => {
     expect(result.redFlags.join(' ')).toMatch(/udokumentowana historia obsługi/i);
     expect(result.verificationItems.join(' ')).toMatch(/serwis xDrive/i);
     expect(result.sellerDeclaredType).toBe('private');
-    expect(result.sellerInferredType).toBe('private');
-    expect(result.sellerConfidence).toBeLessThanOrEqual(0.7);
+    expect(['private', 'likely_private']).toContain(result.sellerInferredType);
+    expect(result.sellerConfidence).toBeLessThanOrEqual(0.4);
   });
 
   it('allows inspect only when VIN, engine and service evidence are sufficiently clear', () => {
@@ -91,6 +92,37 @@ describe('applyRecommendationPolicy', () => {
       profile,
       scoreListing(listing, profile),
     );
+    expect(result.recommendedAction).toBe('inspect');
+  });
+
+  it('can still recommend a strong car sold by a dealer', () => {
+    const profile = searchProfiles[0]!;
+    const listing = normalizeListing(
+      rawListing({
+        declaredSellerType: 'dealer',
+        sellerCompanyName: 'BMW Auto Centrum',
+      }),
+      profile,
+    );
+    const result = applyRecommendationPolicy(
+      rawAnalysis({
+        sellerInferredType: 'dealer',
+        sellerConfidence: 0.95,
+        sellerSignals: ['Publiczna nazwa firmy.', 'Stała oferta samochodów.'],
+        sellerRiskExplanation:
+          'Profil sprzedającego wskazuje na zawodową sprzedaż, ale auto jest dobrze opisane.',
+        likelyEngine: 'N52B25',
+        engineConfidence: 0.95,
+        fitScore: 92,
+        riskScore: 10,
+        recommendedAction: 'inspect',
+      }),
+      listing,
+      profile,
+      scoreListing(listing, profile),
+    );
+    expect(['likely_dealer', 'dealer']).toContain(result.sellerInferredType);
+    expect(result.totalScore).toBeGreaterThanOrEqual(70);
     expect(result.recommendedAction).toBe('inspect');
   });
 });

@@ -51,12 +51,15 @@ describe.skipIf(!browserAvailable)('Playwright marketplace adapter', () => {
             engineDisplacement: { value: 2497 },
             enginePower: { value: 218 },
           },
-          offers: { price: id === 'one' ? 21900 : 22900, seller: { name: 'Jan' } },
+          offers: {
+            price: id === 'one' ? 21900 : 22900,
+            seller: { name: 'Jan', identifier: 'seller-123', url: '/seller/jan' },
+          },
           additionalProperty: [
             { name: 'Typ nadwozia', value: 'Kombi' },
             { name: 'Model', value: 'Seria 3' },
           ],
-        })}</script></head><body><p>Osoba prywatna</p></body></html>`);
+        })}</script></head><body><section data-testid="seller-card"><p>Osoba prywatna</p><p>7 ogłoszeń</p></section><footer>Finansowanie marketplace</footer></body></html>`);
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -84,6 +87,8 @@ describe.skipIf(!browserAvailable)('Playwright marketplace adapter', () => {
     expect(result.listings[0]).toMatchObject({
       declaredSellerType: 'private',
       sellerName: 'Jan',
+      sourceSellerId: 'seller-123',
+      currentActiveVehicleCount: 7,
       attributes: {
         'Rok produkcji': '2006',
         'Rodzaj paliwa': 'Benzyna',
@@ -94,6 +99,9 @@ describe.skipIf(!browserAvailable)('Playwright marketplace adapter', () => {
     const undated = result.listings.find((listing) => listing.externalId === 'two');
     expect(dated?.publishedAt).not.toBeNull();
     expect(undated?.publishedAt).toBeNull();
+    expect(result.listings[0]?.sellerBusinessSignals).not.toContain(
+      'W treści oferowane jest finansowanie, raty lub leasing.',
+    );
   }, 20_000);
 
   it('reports a truncation error when a safety limit hides results', async () => {

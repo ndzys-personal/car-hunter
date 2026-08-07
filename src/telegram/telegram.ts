@@ -60,6 +60,7 @@ export function formatMessage(
 ): string {
   const priority = recommendationLabel(analysis);
   const change = priceChanged ? ' · 📉 ZMIANA CENY' : '';
+  const sellerFacts = sellerSummary(analysis);
   const facts = [
     `🚘 Model: ${escapeHtml([listing.generation, listing.variant].filter(Boolean).join(' ') || listing.model)}`,
     listing.year ? `📅 ${listing.year}` : null,
@@ -74,8 +75,7 @@ export function formatMessage(
       ? `🔧 Prawdopodobny silnik: ${escapeHtml(engineLabel(analysis.likelyEngine))} (${Math.round(analysis.engineConfidence * 100)}%)`
       : null,
     listing.driveType !== 'unknown' ? `🚗 Napęd: ${listing.driveType.toUpperCase()}` : null,
-    `👤 Typ deklarowany: ${sellerLabel(analysis.sellerDeclaredType)}`,
-    `🕵️ Typ wnioskowany: ${sellerLabel(analysis.sellerInferredType)} (${Math.round(analysis.sellerConfidence * 100)}%)`,
+    ...sellerFacts,
     listing.location ? `📍 ${escapeHtml(listing.location)}` : null,
     `🌐 Źródło: ${listing.source.toUpperCase()}`,
   ].filter(Boolean);
@@ -162,8 +162,18 @@ function fuelLabel(value: PersistedListing['fuelType']): string {
   }[value];
 }
 
-function sellerLabel(value: ListingAnalysis['sellerDeclaredType']): string {
-  return { private: 'prywatny', dealer: 'dealer', uncertain: 'niepewny' }[value];
+function sellerSummary(analysis: ListingAnalysis): string[] {
+  if (analysis.sellerInferredType === 'private') return ['👤 Sprzedający: prywatny ✅'];
+  if (analysis.sellerInferredType === 'likely_private')
+    return ['👤 Sprzedający: prawdopodobnie prywatny ✅'];
+  if (analysis.sellerInferredType === 'uncertain') return ['👤 Sprzedający: typ nieustalony ⚠️'];
+  const label =
+    analysis.sellerInferredType === 'dealer' ? 'handlarz/dealer' : 'prawdopodobnie handlarz';
+  return [
+    `👤 Sprzedający: ${label} ⚠️`,
+    ...(analysis.sellerDeclaredType === 'private' ? ['Deklaruje: osoba prywatna'] : []),
+    `Pewność: ${Math.round(analysis.sellerConfidence * 100)}%`,
+  ];
 }
 
 function actionLabel(value: ListingAnalysis['recommendedAction']): string {

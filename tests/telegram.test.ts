@@ -27,6 +27,7 @@ describe('Telegram formatting', () => {
       sellerInferredType: 'private',
       sellerConfidence: 0.88,
       sellerSignals: ['Deklaracja platformy: osoba prywatna'],
+      sellerRiskExplanation: 'Profil wygląda na prywatny.',
       likelyEngine: 'N52B25',
       engineConfidence: 0.94,
       analysisConfidence: 0.86,
@@ -53,6 +54,19 @@ describe('Telegram formatting', () => {
     expect(message).toContain('skontaktuj się ze sprzedawcą');
     expect(message).toContain('Opublikowano:');
     expect(message).toContain('Wykryto:');
+
+    const dealerMessage = formatMessage(
+      listing,
+      {
+        ...analysis,
+        sellerInferredType: 'likely_dealer',
+        sellerConfidence: 0.84,
+      },
+      false,
+    );
+    expect(dealerMessage).toContain('Sprzedający: prawdopodobnie handlarz ⚠️');
+    expect(dealerMessage).toContain('Deklaruje: osoba prywatna');
+    expect(dealerMessage).toContain('Pewność: 84%');
   });
 
   it('shows publication and discovery times, including an unavailable publication date', () => {
@@ -72,6 +86,7 @@ describe('Telegram formatting', () => {
       sellerInferredType: 'private',
       sellerConfidence: 0.6,
       sellerSignals: [],
+      sellerRiskExplanation: 'Brak wystarczających danych.',
       likelyEngine: 'N52B25',
       engineConfidence: 0.9,
       analysisConfidence: 0.9,

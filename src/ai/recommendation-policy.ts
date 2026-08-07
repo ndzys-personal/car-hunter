@@ -4,8 +4,10 @@ import type {
   Listing,
   ListingAnalysis,
   SearchProfile,
+  SellerAssessment,
 } from '../domain/types.js';
 import { inferEngine, type EngineInference } from '../services/engine-inference.js';
+import { detectSellerType, sellerTypeFromDealerProbability } from '../services/seller-detection.js';
 import type { RawListingAnalysis } from './schema.js';
 
 const serviceEvidencePattern =
@@ -23,18 +25,8 @@ export function applyRecommendationPolicy(
   const inferredEngine = inferEngine(listing);
   const engine = reconcileEngine(raw, inferredEngine);
   const hasServiceEvidence = serviceEvidencePattern.test(listing.description);
-  const sellerConfidence =
-    raw.sellerInferredType === 'private'
-      ? Math.min(raw.sellerConfidence, 0.7)
-      : raw.sellerConfidence;
-  const sellerSignals = unique([
-    ...(listing.declaredSellerType === 'private'
-      ? ['Deklaracja platformy: osoba prywatna']
-      : listing.declaredSellerType === 'dealer'
-        ? ['Deklaracja platformy: firma/dealer']
-        : []),
-    ...raw.sellerSignals,
-  ]).slice(0, 8);
+  const seller = reconcileSeller(raw, detectSellerType(listing));
+  const sellerSignals = unique([...seller.signals, ...raw.sellerSignals]).slice(0, 10);
   const majorUncertainties = unique([
     ...raw.majorUncertainties,
     ...(listing.vin ? [] : ['Brak VIN lub dekodowania VIN.']),
@@ -90,8 +82,10 @@ export function applyRecommendationPolicy(
   return {
     ...raw,
     sellerDeclaredType: listing.declaredSellerType,
-    sellerConfidence,
+    sellerInferredType: seller.inferredType,
+    sellerConfidence: seller.confidence,
     sellerSignals,
+    sellerRiskExplanation: seller.riskExplanation,
     likelyEngine: engine.engine,
     engineConfidence: engine.confidence,
     analysisConfidence,
@@ -110,6 +104,33 @@ export function applyRecommendationPolicy(
       engine.engine,
     ),
     recommendedAction,
+  };
+}
+
+function reconcileSeller(
+  raw: RawListingAnalysis,
+  deterministic: SellerAssessment,
+): SellerAssessment {
+  const nonDeclarationSignals = deterministic.signals.filter(
+    (signal) => !/oznaczone jako|sam import|dwa aktywne/i.test(signal),
+  );
+  const deterministicIsStrong = nonDeclarationSignals.length >= 2;
+  const aiHasExplicitReasoning =
+    raw.sellerSignals.length >= 2 && raw.sellerRiskExplanation.trim().length >= 20;
+  const aiWeight = deterministicIsStrong ? 0.15 : aiHasExplicitReasoning ? 0.65 : 0.25;
+  const probability = roundProbability(
+    deterministic.confidence * (1 - aiWeight) + raw.sellerConfidence * aiWeight,
+  );
+  const inferredType = sellerTypeFromDealerProbability(probability);
+  const aiChangedWeakAssessment =
+    aiHasExplicitReasoning && !deterministicIsStrong && inferredType === raw.sellerInferredType;
+  return {
+    inferredType,
+    confidence: probability,
+    signals: deterministic.signals,
+    riskExplanation: aiChangedWeakAssessment
+      ? raw.sellerRiskExplanation
+      : deterministic.riskExplanation,
   };
 }
 
@@ -218,4 +239,8 @@ function normalizeAmbiguousEngineNarrative(value: string, engine: EngineCode): s
 
 function clamp(value: number): number {
   return Math.max(0, Math.min(100, value));
+}
+
+function roundProbability(value: number): number {
+  return Math.max(0, Math.min(1, Math.round(value * 100) / 100));
 }

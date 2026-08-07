@@ -29,6 +29,12 @@ export const searchProfiles: SearchProfile[] = [
         within24HoursBonus: 4,
         within72HoursBonus: 2,
       },
+      seller: {
+        privateBonus: 6,
+        likelyPrivateBonus: 6,
+        likelyDealerPenalty: 6,
+        dealerPenalty: 10,
+      },
     },
     sources: {
       otomoto: source('otomoto', 'E91'),
@@ -56,6 +62,12 @@ export const searchProfiles: SearchProfile[] = [
         windowHours: 72,
         within24HoursBonus: 4,
         within72HoursBonus: 2,
+      },
+      seller: {
+        privateBonus: 6,
+        likelyPrivateBonus: 6,
+        likelyDealerPenalty: 6,
+        dealerPenalty: 10,
       },
     },
     sources: {

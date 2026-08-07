@@ -3,6 +3,8 @@ export type FuelType = 'petrol' | 'diesel' | 'lpg' | 'hybrid' | 'electric' | 'un
 export type Gearbox = 'manual' | 'automatic' | 'unknown';
 export type DriveType = 'rwd' | 'awd' | 'fwd' | 'unknown';
 export type SellerType = 'private' | 'dealer' | 'uncertain';
+export type SellerInferredType =
+  'private' | 'likely_private' | 'uncertain' | 'likely_dealer' | 'dealer';
 export type RecommendedAction = 'ignore' | 'review' | 'call' | 'inspect';
 export type EngineCode = 'N52B25' | 'N52B30' | 'N52B30_or_N53B30' | 'M57' | 'unknown';
 
@@ -32,6 +34,12 @@ export interface SearchProfile {
       within24HoursBonus: number;
       within72HoursBonus: number;
     };
+    seller: {
+      privateBonus: number;
+      likelyPrivateBonus: number;
+      likelyDealerPenalty: number;
+      dealerPenalty: number;
+    };
   };
   sources: Record<SourceName, SearchSourceConfig>;
 }
@@ -45,7 +53,15 @@ export interface RawListing {
   priceText?: string;
   location?: string;
   sellerName?: string;
+  sourceSellerId?: string;
+  sellerProfileUrl?: string;
   declaredSellerType?: SellerType;
+  currentActiveVehicleCount?: number;
+  otherVehicleMakes?: string[];
+  otherVehicleIds?: string[];
+  sellerAccountAgeText?: string;
+  sellerCompanyName?: string;
+  sellerBusinessSignals?: string[];
   primaryImageUrl?: string;
   publishedAt: string | null;
   attributes: Record<string, string>;
@@ -80,7 +96,16 @@ export interface Listing {
   vin: string | null;
   location: string | null;
   sellerName: string | null;
+  sourceSellerId: string | null;
+  sellerProfileUrl: string | null;
   declaredSellerType: SellerType;
+  currentActiveVehicleCount: number | null;
+  otherVehicleMakes: string[];
+  otherVehicleIds: string[];
+  sellerAccountAgeText: string | null;
+  sellerCompanyName: string | null;
+  sellerBusinessSignals: string[];
+  sellerHistory: SellerHistory;
   primaryImageUrl: string | null;
   publishedAt: string | null;
   rawAttributes: Record<string, string>;
@@ -112,9 +137,10 @@ export interface DeterministicScore {
 
 export interface ListingAnalysis {
   sellerDeclaredType: SellerType;
-  sellerInferredType: SellerType;
+  sellerInferredType: SellerInferredType;
   sellerConfidence: number;
   sellerSignals: string[];
+  sellerRiskExplanation: string;
   likelyEngine: EngineCode;
   engineConfidence: number;
   analysisConfidence: number;
@@ -130,6 +156,22 @@ export interface ListingAnalysis {
   summary: string;
   verdict: string;
   recommendedAction: RecommendedAction;
+}
+
+export interface SellerHistory {
+  currentActiveVehicleCount: number | null;
+  historicalVehicleCount: number;
+  uniqueMakesCount: number;
+  firstSeenSellerAt: string | null;
+  lastSeenSellerAt: string | null;
+}
+
+export interface SellerAssessment {
+  inferredType: SellerInferredType;
+  /** Dealer probability, from 0 to 1. */
+  confidence: number;
+  signals: string[];
+  riskExplanation: string;
 }
 
 export interface PersistedListing extends Listing {

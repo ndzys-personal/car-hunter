@@ -16,6 +16,12 @@ interface PagePayload {
   priceText?: string | undefined;
   location?: string | undefined;
   sellerName?: string | undefined;
+  sourceSellerId?: string | undefined;
+  sellerProfileUrl?: string | undefined;
+  currentActiveVehicleCount?: number | undefined;
+  sellerAccountAgeText?: string | undefined;
+  sellerCompanyName?: string | undefined;
+  sellerBusinessSignals: string[];
   declaredSellerType: SellerType;
   primaryImageUrl?: string | undefined;
   publicationDateText?: string | undefined;
@@ -85,6 +91,18 @@ export abstract class PlaywrightMarketplaceAdapter implements MarketplaceAdapter
                 ...(payload.priceText ? { priceText: payload.priceText } : {}),
                 ...(payload.location ? { location: payload.location } : {}),
                 ...(payload.sellerName ? { sellerName: payload.sellerName } : {}),
+                ...(payload.sourceSellerId ? { sourceSellerId: payload.sourceSellerId } : {}),
+                ...(payload.sellerProfileUrl ? { sellerProfileUrl: payload.sellerProfileUrl } : {}),
+                ...(payload.currentActiveVehicleCount !== undefined
+                  ? { currentActiveVehicleCount: payload.currentActiveVehicleCount }
+                  : {}),
+                ...(payload.sellerAccountAgeText
+                  ? { sellerAccountAgeText: payload.sellerAccountAgeText }
+                  : {}),
+                ...(payload.sellerCompanyName
+                  ? { sellerCompanyName: payload.sellerCompanyName }
+                  : {}),
+                sellerBusinessSignals: payload.sellerBusinessSignals,
                 ...(payload.primaryImageUrl ? { primaryImageUrl: payload.primaryImageUrl } : {}),
                 scrapedAt,
               });
@@ -252,6 +270,14 @@ async function extractPayload(page: Page, publicationSelectors: string[]): Promi
             element.textContent,
         );
       },
+      absoluteUrl(value?: string | null) {
+        if (!value) return '';
+        try {
+          return new URL(value, location.href).toString();
+        } catch {
+          return '';
+        }
+      },
     };
     const jsonLd = [
       ...document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'),
@@ -354,6 +380,11 @@ async function extractPayload(page: Page, publicationSelectors: string[]): Promi
     const sellerText = helpers.clean(seller?.name);
     const rawBodyText = document.body.innerText;
     const bodyText = helpers.clean(rawBodyText);
+    const sellerPanelText = helpers.clean(
+      document.querySelector(
+        '[data-testid="seller-card"], [data-testid="seller-info"], [data-testid*="seller-panel" i], [data-cy*="seller" i]',
+      )?.textContent,
+    );
     const structuredPublicationDate = helpers.clean(
       String(
         jsonLd?.datePosted ??
@@ -383,11 +414,58 @@ async function extractPayload(page: Page, publicationSelectors: string[]): Promi
       const value = rawBodyText.match(pattern)?.[1];
       if (value) attributes[label] = helpers.clean(value);
     }
-    const declaredSellerType: SellerType = /firma|dealer|profesjonalny/i.test(bodyText)
-      ? 'dealer'
-      : /osoba prywatna|prywatny/i.test(bodyText)
-        ? 'private'
-        : 'uncertain';
+    const declaredSellerType: SellerType =
+      seller?.['@type'] === 'Organization' || /firma|dealer|profesjonalny/i.test(sellerPanelText)
+        ? 'dealer'
+        : /osoba prywatna|prywatny/i.test(sellerPanelText) || /osoba prywatna/i.test(bodyText)
+          ? 'private'
+          : 'uncertain';
+    const sellerProfileElement = document.querySelector<HTMLAnchorElement>(
+      'a[data-testid*="seller" i][href], a[href*="/uzytkownik/"], a[href*="/dealer/"], a[href*="/sprzedajacy/"]',
+    );
+    const sellerProfileUrl =
+      helpers.absoluteUrl(seller?.url ? String(seller.url) : '') || sellerProfileElement?.href;
+    const structuredSellerId = helpers.clean(
+      String(seller?.identifier?.value ?? seller?.identifier ?? seller?.['@id'] ?? ''),
+    );
+    const sourceSellerId =
+      structuredSellerId ||
+      sellerProfileElement?.getAttribute('data-seller-id') ||
+      sellerProfileUrl ||
+      undefined;
+    const activeCountText = sellerPanelText.match(
+      /(?:wszystkie ogłoszenia|ogłoszenia sprzedającego|oferty sprzedającego)?\s*\(?\s*(\d{1,4})\s+(?:aktywnych\s+)?ogłosze(?:ń|nia)/i,
+    )?.[1];
+    const currentActiveVehicleCount = activeCountText ? Number(activeCountText) : undefined;
+    const sellerAccountAgeText = sellerPanelText.match(
+      /(?:Na OLX od|Sprzedający od|Konto od|Z nami od)\s+([^\n]{3,50})/i,
+    )?.[0];
+    const sellerEvidenceText = helpers.clean(
+      `${String(jsonLd?.description ?? '')} ${sellerPanelText}`,
+    );
+    const sellerBusinessSignals = [
+      /vat\s*mar[zż]a|faktur[ay]\s+vat/i.test(sellerEvidenceText)
+        ? 'W treści widnieje VAT marża lub faktura VAT.'
+        : '',
+      /leasing|kredyt|raty|finansowani/i.test(sellerEvidenceText)
+        ? 'W treści oferowane jest finansowanie, raty lub leasing.'
+        : '',
+      /w rozliczeniu|przyjmujemy auta|zamian[ayę]/i.test(sellerEvidenceText)
+        ? 'W treści oferowana jest zamiana lub przyjęcie auta w rozliczeniu.'
+        : '',
+      /komis|salon|plac.{0,20}(samochod|aut)/i.test(sellerEvidenceText)
+        ? 'Publiczna strona używa określenia komis, salon lub plac samochodowy.'
+        : '',
+      /zapraszamy|nasza oferta|posiadamy inne samochody|wi[eę]cej aut na profilu/i.test(
+        sellerEvidenceText,
+      )
+        ? 'Treść używa języka stałej oferty handlowej.'
+        : '',
+    ].filter(Boolean);
+    const sellerCompanyName =
+      seller?.['@type'] === 'Organization' || declaredSellerType === 'dealer'
+        ? sellerText || undefined
+        : undefined;
 
     return {
       title:
@@ -405,6 +483,12 @@ async function extractPayload(page: Page, publicationSelectors: string[]): Promi
             jsonLd?.offers?.areaServed?.name,
         ) || undefined,
       sellerName: sellerText || undefined,
+      sourceSellerId,
+      sellerProfileUrl,
+      currentActiveVehicleCount,
+      sellerAccountAgeText,
+      sellerCompanyName,
+      sellerBusinessSignals,
       declaredSellerType,
       primaryImageUrl:
         helpers.clean(image) || helpers.meta('meta[property="og:image"]') || undefined,

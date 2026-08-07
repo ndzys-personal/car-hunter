@@ -2,9 +2,10 @@ import { z } from 'zod';
 
 export const rawListingAnalysisSchema = z.object({
   sellerDeclaredType: z.enum(['private', 'dealer', 'uncertain']),
-  sellerInferredType: z.enum(['private', 'dealer', 'uncertain']),
+  sellerInferredType: z.enum(['private', 'likely_private', 'uncertain', 'likely_dealer', 'dealer']),
   sellerConfidence: z.number().min(0).max(1),
-  sellerSignals: z.array(z.string()).max(8),
+  sellerSignals: z.array(z.string()).min(1).max(10),
+  sellerRiskExplanation: z.string(),
   likelyEngine: z.enum(['N52B25', 'N52B30', 'N52B30_or_N53B30', 'M57', 'unknown']),
   engineConfidence: z.number().min(0).max(1),
   analysisConfidence: z.number().min(0).max(1),
@@ -26,9 +27,13 @@ export const rawListingAnalysisJsonSchema = {
   additionalProperties: false,
   properties: {
     sellerDeclaredType: { type: 'string', enum: ['private', 'dealer', 'uncertain'] },
-    sellerInferredType: { type: 'string', enum: ['private', 'dealer', 'uncertain'] },
+    sellerInferredType: {
+      type: 'string',
+      enum: ['private', 'likely_private', 'uncertain', 'likely_dealer', 'dealer'],
+    },
     sellerConfidence: { type: 'number', minimum: 0, maximum: 1 },
-    sellerSignals: { type: 'array', items: { type: 'string' }, maxItems: 8 },
+    sellerSignals: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 10 },
+    sellerRiskExplanation: { type: 'string', description: 'Natural Polish text.' },
     likelyEngine: {
       type: 'string',
       enum: ['N52B25', 'N52B30', 'N52B30_or_N53B30', 'M57', 'unknown'],
@@ -57,6 +62,7 @@ export const rawListingAnalysisJsonSchema = {
     'sellerInferredType',
     'sellerConfidence',
     'sellerSignals',
+    'sellerRiskExplanation',
     'likelyEngine',
     'engineConfidence',
     'analysisConfidence',

@@ -89,11 +89,7 @@ export async function runPipeline(
                 analysis,
               );
 
-              if (
-                options.mode === 'baseline' ||
-                !telegram ||
-                (!persisted.isNew && !persisted.materiallyChanged)
-              )
+              if (options.mode === 'baseline' || !telegram || !isNotificationEvent(persisted.isNew))
                 continue;
               const alreadyNotified = await repository.wasNotified(
                 persisted.id,
@@ -114,11 +110,7 @@ export async function runPipeline(
                     listingId: persisted.id,
                     analysisId,
                     materialHash: persisted.materialHash,
-                    reason: priceChanged
-                      ? 'meaningful_price_drop'
-                      : persisted.isNew
-                        ? 'new_listing'
-                        : 'material_change',
+                    reason: 'new_listing',
                     totalScore: analysis.totalScore,
                     recommendedAction: analysis.recommendedAction,
                     telegramMessageId: messageId,
@@ -169,6 +161,10 @@ export function isMeaningfulPriceDrop(previous: number | null, current: number |
   if (previous === null || current === null || current >= previous) return false;
   const drop = previous - current;
   return drop >= 1_000 || drop / previous >= 0.03;
+}
+
+export function isNotificationEvent(isNew: boolean): boolean {
+  return isNew;
 }
 
 export function shouldNotify(

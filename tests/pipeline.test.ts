@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { canCompleteBaseline, isMeaningfulPriceDrop, shouldNotify } from '../src/jobs/pipeline.js';
+import {
+  canCompleteBaseline,
+  isMeaningfulPriceDrop,
+  isNotificationEvent,
+  shouldNotify,
+} from '../src/jobs/pipeline.js';
 
 describe('price-change notification logic', () => {
   it('allows a meaningful drop and ignores noise', () => {
@@ -13,6 +18,11 @@ describe('price-change notification logic', () => {
     expect(shouldNotify({ totalScore: 90, recommendedAction: 'review' }, 70, false)).toBe(false);
     expect(shouldNotify({ totalScore: 69, recommendedAction: 'inspect' }, 70, false)).toBe(false);
     expect(shouldNotify({ totalScore: 90, recommendedAction: 'inspect' }, 70, true)).toBe(false);
+  });
+
+  it('allows Telegram only for newly discovered listings', () => {
+    expect(isNotificationEvent(true)).toBe(true);
+    expect(isNotificationEvent(false)).toBe(false);
   });
 
   it('completes only a full, successful, non-empty baseline', () => {

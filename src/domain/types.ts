@@ -17,7 +17,7 @@ export interface SearchProfile {
   id: string;
   make: 'BMW';
   generation: 'E91' | 'E61';
-  acceptedGenerations: Array<'E90' | 'E91' | 'E61'>;
+  acceptedGenerations: Array<'E60' | 'E61' | 'E90' | 'E91'>;
   bodyTypes: Array<'Touring' | 'Sedan'>;
   variants: string[];
   year: { min: number; max: number };

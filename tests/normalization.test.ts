@@ -67,6 +67,18 @@ describe('normalizeListing', () => {
     expect(listing.bodyType).toBe('Sedan');
   });
 
+  it('infers E60 for a matching sedan in the E6x search profile', () => {
+    const listing = normalizeListing(
+      rawListing({
+        title: 'BMW 530i Sedan',
+        attributes: { 'Rok produkcji': '2008', Nadwozie: 'Sedan' },
+      }),
+      searchProfiles[1]!,
+    );
+    expect(listing.generation).toBe('E60');
+    expect(listing.bodyType).toBe('Sedan');
+  });
+
   it('recovers Otomoto price and abbreviated mileage from marketplace text', () => {
     const listing = normalizeListing(
       rawListing({

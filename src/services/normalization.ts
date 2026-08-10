@@ -291,7 +291,11 @@ function inferGeneration(
   if (model !== expectedModel || year < profile.year.min) return null;
   const safeLastYear = profile.generation === 'E61' ? 2009 : 2011;
   if (year > safeLastYear) return null;
-  if (profile.generation === 'E61') return isTouring(text) ? 'E61' : null;
+  if (profile.generation === 'E61') {
+    if (isTouring(text)) return 'E61';
+    if (isSedan(text)) return 'E60';
+    return null;
+  }
   if (isTouring(text)) return 'E91';
   if (isSedan(text)) return 'E90';
   return null;

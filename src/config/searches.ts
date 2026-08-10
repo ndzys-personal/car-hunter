@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import type { SearchProfile, SourceName } from '../domain/types.js';
+import { sha256 } from '../services/hash.js';
 
 function source(name: SourceName, generation: 'E91' | 'E61') {
   const key = `${name.toUpperCase()}_${generation}_URL`;
@@ -82,6 +83,14 @@ export function enabledSearchScopes(): string[] {
   return searchProfiles.flatMap((profile) =>
     (Object.keys(profile.sources) as SourceName[])
       .filter((name) => profile.sources[name].enabled)
-      .map((name) => `${profile.id}:${name}`),
+      .map((name) => searchScopeFingerprint(profile.id, name, profile.sources[name].searchUrl)),
   );
+}
+
+export function searchScopeFingerprint(
+  profileId: string,
+  sourceName: SourceName,
+  searchUrl: string,
+): string {
+  return `v2:${profileId}:${sourceName}:${sha256(searchUrl.trim()).slice(0, 16)}`;
 }

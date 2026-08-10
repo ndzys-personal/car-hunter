@@ -45,4 +45,3 @@ jobs:
           MAX_SEARCH_PAGES: ${{ vars.MAX_SEARCH_PAGES || '10' }}
           DETAIL_CONCURRENCY: ${{ vars.DETAIL_CONCURRENCY || '3' }}
           AI_SCORE_THRESHOLD: ${{ vars.AI_SCORE_THRESHOLD || '55' }}
-          NOTIFICATION_SCORE_THRESHOLD: ${{ vars.NOTIFICATION_SCORE_THRESHOLD || '70' }}

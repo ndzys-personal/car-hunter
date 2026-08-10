@@ -17,7 +17,7 @@ export class TelegramService {
     private readonly chatId: string,
   ) {}
 
-  async sendRecommendedListing(
+  async sendListing(
     listing: PersistedListing,
     analysis: ListingAnalysis,
     priceChanged: boolean,

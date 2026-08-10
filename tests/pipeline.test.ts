@@ -3,6 +3,7 @@ import {
   canCompleteBaseline,
   isMeaningfulPriceDrop,
   isNotificationEvent,
+  shouldAnalyzeListing,
   shouldAttemptTelegram,
   shouldNotify,
 } from '../src/jobs/pipeline.js';
@@ -14,11 +15,29 @@ describe('price-change notification logic', () => {
     expect(isMeaningfulPriceDrop(null, 24_000)).toBe(false);
   });
 
-  it('notifies only actionable, high-score, unseen versions', () => {
-    expect(shouldNotify({ totalScore: 70, recommendedAction: 'call' }, 70, false)).toBe(true);
-    expect(shouldNotify({ totalScore: 90, recommendedAction: 'review' }, 70, false)).toBe(false);
-    expect(shouldNotify({ totalScore: 69, recommendedAction: 'inspect' }, 70, false)).toBe(false);
-    expect(shouldNotify({ totalScore: 90, recommendedAction: 'inspect' }, 70, true)).toBe(false);
+  it('notifies every unseen new listing regardless of AI score or action', () => {
+    expect(shouldNotify(false)).toBe(true);
+    expect(shouldNotify(true)).toBe(false);
+  });
+
+  it('analyzes every new scan listing and keeps the threshold for other work', () => {
+    const input = {
+      mode: 'scan',
+      skipAi: false,
+      aiAvailable: true,
+      isNew: true,
+      rejected: true,
+      totalScore: 10,
+      threshold: 55,
+    } as const;
+    expect(shouldAnalyzeListing(input)).toBe(true);
+    expect(shouldAnalyzeListing({ ...input, isNew: false })).toBe(false);
+    expect(shouldAnalyzeListing({ ...input, isNew: false, rejected: false, totalScore: 55 })).toBe(
+      true,
+    );
+    expect(shouldAnalyzeListing({ ...input, skipAi: true })).toBe(false);
+    expect(shouldAnalyzeListing({ ...input, aiAvailable: false })).toBe(false);
+    expect(shouldAnalyzeListing({ ...input, mode: 'baseline' })).toBe(false);
   });
 
   it('allows Telegram only for newly discovered listings', () => {

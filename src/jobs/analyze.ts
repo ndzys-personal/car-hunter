@@ -51,7 +51,7 @@ async function main(): Promise<void> {
     telegramMessageId = await new TelegramService(
       config.TELEGRAM_BOT_TOKEN,
       config.TELEGRAM_CHAT_ID,
-    ).sendRecommendedListing(listing, analysis, false);
+    ).sendListing(listing, analysis, false);
   }
 
   console.log(

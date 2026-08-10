@@ -58,11 +58,15 @@ export async function runPipeline(
               const score = persistedResult.score;
               counts.processed += 1;
 
-              const eligibleForAi =
-                !options.skipAi &&
-                aiProvider &&
-                !score.rejected &&
-                score.totalScore >= config.AI_SCORE_THRESHOLD;
+              const eligibleForAi = shouldAnalyzeListing({
+                mode: options.mode,
+                skipAi: options.skipAi,
+                aiAvailable: Boolean(aiProvider),
+                isNew: persisted.isNew,
+                rejected: score.rejected,
+                totalScore: score.totalScore,
+                threshold: config.AI_SCORE_THRESHOLD,
+              });
               if (!eligibleForAi || !aiProvider) continue;
 
               const cached = await repository.getCachedAnalysis(
@@ -94,17 +98,13 @@ export async function runPipeline(
                 persisted.id,
                 persisted.materialHash,
               );
-              if (shouldNotify(analysis, config.NOTIFICATION_SCORE_THRESHOLD, alreadyNotified)) {
+              if (shouldNotify(alreadyNotified)) {
                 const priceChanged = isMeaningfulPriceDrop(
                   persisted.previousPricePln,
                   persisted.pricePln,
                 );
                 try {
-                  const messageId = await telegram.sendRecommendedListing(
-                    persisted,
-                    analysis,
-                    priceChanged,
-                  );
+                  const messageId = await telegram.sendListing(persisted, analysis, priceChanged);
                   await repository.saveNotification({
                     listingId: persisted.id,
                     analysisId,
@@ -170,16 +170,22 @@ export function shouldAttemptTelegram(mode: PipelineOptions['mode'], isNew: bool
   return mode === 'scan' && isNotificationEvent(isNew);
 }
 
-export function shouldNotify(
-  analysis: { totalScore: number; recommendedAction: string },
-  threshold: number,
-  alreadyNotified: boolean,
-): boolean {
-  return (
-    ['call', 'inspect'].includes(analysis.recommendedAction) &&
-    analysis.totalScore >= threshold &&
-    !alreadyNotified
-  );
+export function shouldAnalyzeListing(input: {
+  mode: PipelineOptions['mode'];
+  skipAi: boolean;
+  aiAvailable: boolean;
+  isNew: boolean;
+  rejected: boolean;
+  totalScore: number;
+  threshold: number;
+}): boolean {
+  if (input.skipAi || !input.aiAvailable) return false;
+  if (input.mode === 'scan' && input.isNew) return true;
+  return !input.rejected && input.totalScore >= input.threshold;
+}
+
+export function shouldNotify(alreadyNotified: boolean): boolean {
+  return !alreadyNotified;
 }
 
 export function canCompleteBaseline(

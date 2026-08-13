@@ -16,6 +16,11 @@ const envSchema = z.object({
   MAX_SEARCH_PAGES: z.coerce.number().int().positive().max(50).default(10),
   DETAIL_CONCURRENCY: z.coerce.number().int().positive().max(5).default(3),
   AI_SCORE_THRESHOLD: z.coerce.number().int().min(0).max(100).default(55),
+  HISTORY_SEARCH_ENABLED: z
+    .string()
+    .default('true')
+    .transform((value) => value !== 'false'),
+  HISTORY_SEARCH_TTL_DAYS: z.coerce.number().positive().max(90).default(7),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 });
 

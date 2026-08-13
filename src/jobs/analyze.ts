@@ -7,6 +7,8 @@ import { createSupabaseClient } from '../db/client.js';
 import { CarHunterRepository } from '../db/repository.js';
 import { scoreListing } from '../services/scoring.js';
 import { TelegramService } from '../telegram/telegram.js';
+import { PublicWebVehicleHistoryProvider } from '../history/public-web-provider.js';
+import { VehicleHistoryService } from '../history/service.js';
 
 await main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
@@ -33,8 +35,16 @@ async function main(): Promise<void> {
   if (!profile) throw new Error(`Search profile not found: ${listing.profileId}`);
 
   const deterministicScore = scoreListing(listing, profile);
+  const historyService = new VehicleHistoryService(
+    repository,
+    config.HISTORY_SEARCH_ENABLED ? [new PublicWebVehicleHistoryProvider()] : [],
+    config.HISTORY_SEARCH_TTL_DAYS * 86_400_000,
+  );
+  const vehicleHistory = await historyService.analyze(listing, {
+    forceRefresh: process.argv.includes('--refresh-history'),
+  });
   const gemini = new GeminiProvider(config.GEMINI_API_KEY, config.GEMINI_MODEL);
-  const analysis = await gemini.analyze(listing, profile, deterministicScore);
+  const analysis = await gemini.analyze(listing, profile, deterministicScore, vehicleHistory);
   const analysisId = await repository.saveAnalysis(
     listing.id,
     listing.materialHash,
@@ -42,6 +52,7 @@ async function main(): Promise<void> {
     gemini.model,
     LISTING_ANALYSIS_PROMPT_VERSION,
     analysis,
+    vehicleHistory.fingerprint,
   );
   let telegramMessageId: string | undefined;
   if (sendToTelegram) {
@@ -51,7 +62,7 @@ async function main(): Promise<void> {
     telegramMessageId = await new TelegramService(
       config.TELEGRAM_BOT_TOKEN,
       config.TELEGRAM_CHAT_ID,
-    ).sendListing(listing, analysis, false);
+    ).sendListing(listing, analysis, false, vehicleHistory);
   }
 
   console.log(
@@ -62,6 +73,7 @@ async function main(): Promise<void> {
         model: gemini.model,
         deterministicScore,
         analysis,
+        vehicleHistory,
         ...(telegramMessageId ? { telegramMessageId } : {}),
       },
       null,

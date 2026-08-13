@@ -7,6 +7,8 @@ import { logger } from '../services/logger.js';
 import { TelegramService } from '../telegram/telegram.js';
 import { parseCliArgs } from './cli.js';
 import { runPipeline } from './pipeline.js';
+import { PublicWebVehicleHistoryProvider } from '../history/public-web-provider.js';
+import { VehicleHistoryService } from '../history/service.js';
 
 const config = getRuntimeConfig();
 const options = parseCliArgs(process.argv.slice(2));
@@ -28,5 +30,10 @@ if (!(await repository.isBaselineCompleted(enabledSearchScopes()))) {
       : undefined;
   if (!ai) logger.warn('Gemini is unavailable; scan stores deterministic results only');
   if (!telegram) logger.warn('Telegram is unavailable; no notifications will be sent');
-  await runPipeline(config, repository, { mode: 'scan', ...options }, ai, telegram);
+  const history = new VehicleHistoryService(
+    repository,
+    config.HISTORY_SEARCH_ENABLED ? [new PublicWebVehicleHistoryProvider()] : [],
+    config.HISTORY_SEARCH_TTL_DAYS * 86_400_000,
+  );
+  await runPipeline(config, repository, { mode: 'scan', ...options }, ai, telegram, history);
 }

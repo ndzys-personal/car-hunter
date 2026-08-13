@@ -45,3 +45,5 @@ jobs:
           MAX_SEARCH_PAGES: ${{ vars.MAX_SEARCH_PAGES || '10' }}
           DETAIL_CONCURRENCY: ${{ vars.DETAIL_CONCURRENCY || '3' }}
           AI_SCORE_THRESHOLD: ${{ vars.AI_SCORE_THRESHOLD || '55' }}
+          HISTORY_SEARCH_ENABLED: ${{ vars.HISTORY_SEARCH_ENABLED || 'true' }}
+          HISTORY_SEARCH_TTL_DAYS: ${{ vars.HISTORY_SEARCH_TTL_DAYS || '7' }}

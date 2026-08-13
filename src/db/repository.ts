@@ -2,15 +2,18 @@ import type {
   DeterministicScore,
   Listing,
   ListingAnalysis,
+  HistoricalVehicleRecord,
   PersistedListing,
   RecommendedAction,
   SearchProfile,
   SellerHistory,
+  VehicleHistoryAnalysis,
 } from '../domain/types.js';
 import type { DatabaseClient } from './client.js';
 import { sha256 } from '../services/hash.js';
 import { scoreListing } from '../services/scoring.js';
 import { detectSellerType } from '../services/seller-detection.js';
+import { normalizeVin } from '../services/vin.js';
 
 export class CarHunterRepository {
   constructor(private readonly db: DatabaseClient) {}
@@ -97,6 +100,7 @@ export class CarHunterRepository {
     if (existingError) throw existingError;
 
     const seller = await this.upsertSeller(listing);
+    const vehicleId = await this.upsertVehicle(listing);
     const timestamps = resolveListingTimestamps(
       existing
         ? {
@@ -117,6 +121,7 @@ export class CarHunterRepository {
     const row: Record<string, unknown> = {
       ...listingToRow(effectiveListing, score),
       seller_id: seller?.id ?? null,
+      vehicle_id: vehicleId,
       published_at: timestamps.publishedAt,
       last_seen_at: timestamps.lastSeenAt,
     };
@@ -130,17 +135,33 @@ export class CarHunterRepository {
 
     const isNew = !existing;
     const materiallyChanged = Boolean(existing && existing.material_hash !== listing.materialHash);
-    if (isNew || materiallyChanged) {
+    {
       const { error: snapshotError } = await this.db.from('listing_snapshots').upsert(
         {
           listing_id: data.id,
           scan_run_id: scanRunId,
           material_hash: listing.materialHash,
           price_pln: listing.pricePln,
+          mileage_km: listing.mileageKm,
+          vehicle_id: vehicleId,
+          source: listing.source,
+          source_listing_id: listing.sourceListingId,
+          vin: normalizeVin(listing.vin),
+          title: listing.title,
+          published_at: timestamps.publishedAt,
+          first_seen_at: timestamps.firstSeenAt,
+          last_seen_at: timestamps.lastSeenAt,
+          seller_id: seller?.id ?? null,
+          seller_name: listing.sellerName,
+          seller_type: listing.declaredSellerType,
+          location: listing.location,
+          description_hash: sha256(listing.description),
+          listing_url: listing.url,
+          captured_at: listing.scrapedAt,
           description: listing.description,
           raw_attributes: listing.rawAttributes,
         },
-        { onConflict: 'listing_id,material_hash', ignoreDuplicates: true },
+        { onConflict: 'listing_id,captured_at', ignoreDuplicates: true },
       );
       if (snapshotError) throw snapshotError;
     }
@@ -151,6 +172,7 @@ export class CarHunterRepository {
         ...effectiveListing,
         publishedAt: typeof data.published_at === 'string' ? data.published_at : null,
         id: data.id as string,
+        vehicleId,
         firstSeenAt: data.first_seen_at as string,
         lastSeenAt: data.last_seen_at as string,
         previousMaterialHash: (existing?.material_hash as string | undefined) ?? null,
@@ -161,10 +183,133 @@ export class CarHunterRepository {
     };
   }
 
+  private async upsertVehicle(listing: Listing): Promise<string | null> {
+    const vin = normalizeVin(listing.vin);
+    if (!vin) return null;
+    const { data, error } = await this.db
+      .from('vehicles')
+      .upsert(
+        { normalized_vin: vin, last_seen_at: listing.scrapedAt },
+        { onConflict: 'normalized_vin' },
+      )
+      .select('id')
+      .single();
+    if (error) throw error;
+    return data.id as string;
+  }
+
+  async getHistoryCache(vehicleId: string): Promise<{
+    historyCheckedAt: string | null;
+    historyCheckVersion: string | null;
+    listingFingerprint: string | null;
+    sellerFingerprint: string | null;
+  }> {
+    const { data, error } = await this.db
+      .from('vehicles')
+      .select(
+        'history_checked_at, history_check_version, history_listing_fingerprint, history_seller_fingerprint',
+      )
+      .eq('id', vehicleId)
+      .single();
+    if (error) throw error;
+    return {
+      historyCheckedAt: nullableString(data.history_checked_at),
+      historyCheckVersion: nullableString(data.history_check_version),
+      listingFingerprint: nullableString(data.history_listing_fingerprint),
+      sellerFingerprint: nullableString(data.history_seller_fingerprint),
+    };
+  }
+
+  async markHistoryChecked(
+    vehicleId: string,
+    input: {
+      checkedAt: string;
+      version: string;
+      listingFingerprint: string;
+      sellerFingerprint: string;
+    },
+  ): Promise<void> {
+    const { error } = await this.db
+      .from('vehicles')
+      .update({
+        history_checked_at: input.checkedAt,
+        history_check_version: input.version,
+        history_listing_fingerprint: input.listingFingerprint,
+        history_seller_fingerprint: input.sellerFingerprint,
+      })
+      .eq('id', vehicleId);
+    if (error) throw error;
+  }
+
+  async saveExternalHistory(vehicleId: string, records: HistoricalVehicleRecord[]): Promise<void> {
+    if (!records.length) return;
+    const rows = records.map((record) => ({
+      vehicle_id: vehicleId,
+      source: record.source,
+      source_listing_id: record.sourceListingId ?? null,
+      historical_url: record.historicalUrl,
+      observed_at: record.observedAt,
+      published_at: record.publishedAt,
+      price_pln: record.pricePln,
+      mileage_km: record.mileageKm,
+      title: record.title,
+      vehicle_model: record.vehicleModel,
+      location: record.location,
+      seller_external_id: record.sellerId,
+      seller_name: record.sellerName,
+      seller_type: record.sellerType,
+      description_excerpt: record.descriptionExcerpt,
+      damage_status: record.damageStatus,
+      running_status: record.runningStatus,
+      vin_confirmed: record.vinConfirmed,
+      confidence: record.confidence,
+      evidence_url: record.evidenceUrl,
+    }));
+    const { error } = await this.db.from('historical_listings').upsert(rows, {
+      onConflict: 'vehicle_id,historical_url,observed_at',
+      ignoreDuplicates: true,
+    });
+    if (error) throw error;
+  }
+
+  async getHistoryRecords(vehicleId: string): Promise<HistoricalVehicleRecord[]> {
+    const [snapshotsResult, externalResult] = await Promise.all([
+      this.db.from('listing_snapshots').select('*').eq('vehicle_id', vehicleId),
+      this.db.from('historical_listings').select('*').eq('vehicle_id', vehicleId),
+    ]);
+    if (snapshotsResult.error) throw snapshotsResult.error;
+    if (externalResult.error) throw externalResult.error;
+    const internal = ((snapshotsResult.data ?? []) as Array<Record<string, unknown>>).map(
+      snapshotHistoryFromRow,
+    );
+    const external = ((externalResult.data ?? []) as Array<Record<string, unknown>>).map(
+      externalHistoryFromRow,
+    );
+    return [...internal, ...external];
+  }
+
+  async saveHistorySignals(vehicleId: string, analysis: VehicleHistoryAnalysis): Promise<void> {
+    const rows = analysis.historySignals.map((item) => ({
+      vehicle_id: vehicleId,
+      analysis_fingerprint: analysis.fingerprint,
+      signal_type: item.type,
+      severity: item.severity,
+      confidence: item.confidence,
+      message_pl: item.messagePl,
+      evidence_urls: item.evidenceUrls,
+    }));
+    if (!rows.length) return;
+    const { error } = await this.db.from('vehicle_history_signals').upsert(rows, {
+      onConflict: 'vehicle_id,analysis_fingerprint,signal_type',
+    });
+    if (error) throw error;
+  }
+
   async getCachedAnalysis(
     listingId: string,
     materialHash: string,
     promptVersion: string,
+    historyFingerprint = 'none',
   ): Promise<ListingAnalysis | null> {
     const { data, error } = (await this.db
       .from('listing_analysis')
@@ -172,6 +317,7 @@ export class CarHunterRepository {
       .eq('listing_id', listingId)
       .eq('material_hash', materialHash)
       .eq('prompt_version', promptVersion)
+      .eq('history_fingerprint', historyFingerprint)
       .maybeSingle()) as unknown as {
       data: Record<string, unknown> | null;
       error: Error | null;
@@ -197,6 +343,7 @@ export class CarHunterRepository {
     model: string,
     promptVersion: string,
     analysis: ListingAnalysis,
+    historyFingerprint = 'none',
   ): Promise<string> {
     const { data, error } = await this.db
       .from('listing_analysis')
@@ -207,6 +354,7 @@ export class CarHunterRepository {
           provider,
           model,
           prompt_version: promptVersion,
+          history_fingerprint: historyFingerprint,
           seller_type: analysis.sellerInferredType,
           seller_declared_type: analysis.sellerDeclaredType,
           seller_inferred_type: analysis.sellerInferredType,
@@ -350,7 +498,7 @@ export class CarHunterRepository {
 
   async saveNotification(input: {
     listingId: string;
-    analysisId: string;
+    analysisId?: string;
     materialHash: string;
     reason: string;
     totalScore: number;
@@ -359,7 +507,7 @@ export class CarHunterRepository {
   }): Promise<void> {
     const { error } = await this.db.from('notifications').insert({
       listing_id: input.listingId,
-      listing_analysis_id: input.analysisId,
+      listing_analysis_id: input.analysisId ?? null,
       material_hash: input.materialHash,
       reason: input.reason,
       total_score: input.totalScore,
@@ -450,6 +598,7 @@ function analysisFromRow(row: Record<string, unknown>): ListingAnalysis {
 function persistedListingFromRow(row: Record<string, unknown>): PersistedListing {
   return {
     id: String(row.id),
+    vehicleId: nullableString(row.vehicle_id),
     source: row.source as PersistedListing['source'],
     sourceListingId: String(row.source_listing_id),
     profileId: String(row.profile_id),
@@ -506,6 +655,62 @@ function persistedListingFromRow(row: Record<string, unknown>): PersistedListing
     previousPricePln: null,
     isNew: false,
     materiallyChanged: false,
+  };
+}
+
+function snapshotHistoryFromRow(row: Record<string, unknown>): HistoricalVehicleRecord {
+  const description = nullableString(row.description);
+  return {
+    source: String(row.source),
+    sourceListingId: nullableString(row.source_listing_id),
+    historicalUrl: String(row.listing_url),
+    observedAt: String(row.captured_at),
+    publishedAt: nullableString(row.published_at),
+    pricePln: nullableNumber(row.price_pln),
+    mileageKm: nullableNumber(row.mileage_km),
+    title: nullableString(row.title),
+    vehicleModel: null,
+    location: nullableString(row.location),
+    sellerId: nullableString(row.seller_id),
+    sellerName: nullableString(row.seller_name),
+    sellerType: nullableString(row.seller_type) as HistoricalVehicleRecord['sellerType'],
+    descriptionExcerpt: description?.slice(0, 800) ?? null,
+    damageStatus: /uszkodzon|do naprawy|powypadkow|awaria/i.test(description ?? '')
+      ? 'damaged'
+      : 'unknown',
+    runningStatus: /nie odpala|nie jeździ|niesprawn/i.test(description ?? '')
+      ? 'non_running'
+      : 'unknown',
+    vinConfirmed: Boolean(row.vin),
+    confidence: 'high',
+    evidenceUrl: String(row.listing_url),
+    origin: 'internal',
+  };
+}
+
+function externalHistoryFromRow(row: Record<string, unknown>): HistoricalVehicleRecord {
+  return {
+    id: String(row.id),
+    source: String(row.source),
+    sourceListingId: nullableString(row.source_listing_id),
+    historicalUrl: String(row.historical_url),
+    observedAt: String(row.observed_at),
+    publishedAt: nullableString(row.published_at),
+    pricePln: nullableNumber(row.price_pln),
+    mileageKm: nullableNumber(row.mileage_km),
+    title: nullableString(row.title),
+    vehicleModel: nullableString(row.vehicle_model),
+    location: nullableString(row.location),
+    sellerId: nullableString(row.seller_external_id),
+    sellerName: nullableString(row.seller_name),
+    sellerType: nullableString(row.seller_type) as HistoricalVehicleRecord['sellerType'],
+    descriptionExcerpt: nullableString(row.description_excerpt),
+    damageStatus: String(row.damage_status) as HistoricalVehicleRecord['damageStatus'],
+    runningStatus: String(row.running_status) as HistoricalVehicleRecord['runningStatus'],
+    vinConfirmed: Boolean(row.vin_confirmed),
+    confidence: String(row.confidence) as HistoricalVehicleRecord['confidence'],
+    evidenceUrl: String(row.evidence_url),
+    origin: 'external',
   };
 }
 

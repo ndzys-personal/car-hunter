@@ -3,6 +3,7 @@ import type {
   Listing,
   ListingAnalysis,
   SearchProfile,
+  VehicleHistoryAnalysis,
 } from '../domain/types.js';
 
 export interface AiProvider {
@@ -12,5 +13,6 @@ export interface AiProvider {
     listing: Listing,
     profile: SearchProfile,
     deterministicScore: DeterministicScore,
+    vehicleHistory?: VehicleHistoryAnalysis,
   ): Promise<ListingAnalysis>;
 }

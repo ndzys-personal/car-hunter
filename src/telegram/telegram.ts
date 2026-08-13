@@ -1,4 +1,4 @@
-import type { ListingAnalysis, PersistedListing } from '../domain/types.js';
+import type { ListingAnalysis, PersistedListing, VehicleHistoryAnalysis } from '../domain/types.js';
 import { formatPolishRelativeTimestamp } from '../services/publication-date.js';
 
 interface TelegramResponse<T> {
@@ -15,14 +15,16 @@ export class TelegramService {
   constructor(
     private readonly botToken: string,
     private readonly chatId: string,
+    private readonly fetcher: typeof fetch = fetch,
   ) {}
 
   async sendListing(
     listing: PersistedListing,
     analysis: ListingAnalysis,
     priceChanged: boolean,
+    vehicleHistory?: VehicleHistoryAnalysis,
   ): Promise<string> {
-    const text = formatMessage(listing, analysis, priceChanged);
+    const text = formatMessage(listing, analysis, priceChanged, vehicleHistory);
     return this.sendHtml(text, false);
   }
 
@@ -34,30 +36,50 @@ export class TelegramService {
   }
 
   private async sendHtml(text: string, disablePreview: boolean): Promise<string> {
-    const response = await fetch(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: this.chatId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: disablePreview,
-      }),
-    });
-    const payload = (await response.json()) as TelegramResponse<TelegramMessage>;
-    if (!response.ok || !payload.ok || !payload.result) {
-      throw new Error(payload.description ?? `Telegram HTTP ${response.status}`);
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const response = await this.fetcher(
+          `https://api.telegram.org/bot${this.botToken}/sendMessage`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: this.chatId,
+              text,
+              parse_mode: 'HTML',
+              disable_web_page_preview: disablePreview,
+            }),
+            signal: AbortSignal.timeout(15_000),
+          },
+        );
+        const payload = (await response.json()) as TelegramResponse<TelegramMessage>;
+        if (!response.ok || !payload.ok || !payload.result) {
+          throw new Error(payload.description ?? `Telegram HTTP ${response.status}`);
+        }
+        return String(payload.result.message_id);
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) await delay(attempt * 250);
+      }
     }
-    return String(payload.result.message_id);
+    throw lastError;
   }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export function formatMessage(
   listing: PersistedListing,
   analysis: ListingAnalysis,
   priceChanged: boolean,
-  now: Date = new Date(),
+  historyOrNow?: VehicleHistoryAnalysis | Date,
+  nowArg: Date = new Date(),
 ): string {
+  const vehicleHistory = historyOrNow instanceof Date ? undefined : historyOrNow;
+  const now = historyOrNow instanceof Date ? historyOrNow : nowArg;
   const priority = recommendationLabel(analysis);
   const change = priceChanged ? ' · 📉 ZMIANA CENY' : '';
   const sellerFacts = sellerSummary(analysis);
@@ -93,6 +115,7 @@ export function formatMessage(
         '🕐 Data publikacji: brak danych',
         `👁 Pierwszy raz wykryto: ${formatPolishRelativeTimestamp(listing.firstSeenAt, now)}`,
       ];
+  const history = formatHistory(vehicleHistory);
 
   return [
     `<b>${priority} — ${analysis.totalScore}/100${change}</b>`,
@@ -103,6 +126,7 @@ export function formatMessage(
     ...facts,
     '',
     ...freshness,
+    ...history,
     '',
     '<b>✅ Plusy</b>',
     ...(positives.length ? positives : ['• Brak potwierdzonych mocnych stron']),
@@ -119,6 +143,55 @@ export function formatMessage(
     `<b>Następny krok:</b> ${actionLabel(analysis.recommendedAction)}`,
     `<a href="${escapeHtml(listing.url)}">👉 Otwórz ogłoszenie</a>`,
   ].join('\n');
+}
+
+function formatHistory(history?: VehicleHistoryAnalysis): string[] {
+  if (!history?.meaningful || history.previousListings.length === 0) return [];
+  const heading = history.serious ? '🚨 WAŻNA HISTORIA' : '📜 HISTORIA OGŁOSZENIA';
+  const records = history.previousListings.slice(-3).map((record) => {
+    const date = formatHistoryDate(record.publishedAt ?? record.observedAt);
+    const facts = [
+      record.pricePln !== null ? `${formatNumber(record.pricePln)} zł` : null,
+      record.mileageKm !== null ? `${formatNumber(record.mileageKm)} km` : null,
+      record.source,
+    ]
+      .filter(Boolean)
+      .join(' / ');
+    return `• ${date}: ${escapeHtml(facts)}`;
+  });
+  const details = [
+    history.priceDropAmount
+      ? `📉 Cena spadła łącznie o ${formatNumber(history.priceDropAmount)} zł`
+      : null,
+    history.estimatedDaysOnMarket !== null && history.estimatedDaysOnMarket >= 60
+      ? `⏳ Auto pojawia się w ogłoszeniach od co najmniej ~${Math.max(2, Math.floor(history.estimatedDaysOnMarket / 30))} miesięcy`
+      : null,
+    ...history.historySignals
+      .filter((signal) => signal.severity === 'strong_warning')
+      .slice(0, 2)
+      .map((signal) => `• ${escapeHtml(signal.messagePl)}`),
+  ].filter((line): line is string => Boolean(line));
+  const importantEvidence = history.historySignals
+    .filter((signal) => signal.severity === 'strong_warning')
+    .flatMap((signal) => signal.evidenceUrls)
+    .find((url) => /^https?:\/\//.test(url));
+  return [
+    '',
+    `<b>${heading}</b>`,
+    ...records,
+    ...details,
+    ...(importantEvidence
+      ? [`<a href="${escapeHtml(importantEvidence)}">👉 Poprzednie ogłoszenie</a>`]
+      : []),
+    '',
+  ];
+}
+
+function formatHistoryDate(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat('pl-PL').format(date)
+    : 'data nieznana';
 }
 
 export function recommendationLabel(

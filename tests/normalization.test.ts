@@ -4,6 +4,19 @@ import { normalizeListing } from '../src/services/normalization.js';
 import { rawListing } from './fixtures.js';
 
 describe('normalizeListing', () => {
+  it('normalizes the same valid VIN to one cross-marketplace identity', () => {
+    const otomoto = normalizeListing(rawListing({ source: 'otomoto' }), searchProfiles[0]!);
+    const olx = normalizeListing(
+      rawListing({
+        source: 'olx',
+        externalId: 'OLX-2',
+        attributes: { ...rawListing().attributes, VIN: 'wbavt71090a123456' },
+      }),
+      searchProfiles[0]!,
+    );
+    expect(otomoto.vin).toBe(olx.vin);
+    expect(otomoto.deduplicationKey).toBe(olx.deduplicationKey);
+  });
   it('normalizes Polish marketplace fields and strips tracking parameters', () => {
     const listing = normalizeListing(rawListing(), searchProfiles[0]!);
     expect(listing).toMatchObject({

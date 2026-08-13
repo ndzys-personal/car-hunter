@@ -8,6 +8,7 @@ import type {
   SellerType,
 } from '../domain/types.js';
 import { sha256 } from './hash.js';
+import { normalizeVin } from './vin.js';
 
 const attributeAliases: Record<string, string[]> = {
   price: ['cena', 'price'],
@@ -244,7 +245,8 @@ function parseSeller(value: string): SellerType {
 }
 
 function parseVin(value: string): string | null {
-  return value.toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/)?.[0] ?? null;
+  const candidate = value.toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/)?.[0];
+  return normalizeVin(candidate);
 }
 
 function isTouring(value: string): boolean {

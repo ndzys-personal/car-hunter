@@ -7,6 +7,10 @@ import {
   shouldAttemptTelegram,
   shouldNotify,
 } from '../src/jobs/pipeline.js';
+import { searchProfiles } from '../src/config/searches.js';
+import { normalizeListing } from '../src/services/normalization.js';
+import { createFallbackAnalysis } from '../src/services/fallback-analysis.js';
+import { rawListing } from './fixtures.js';
 
 describe('price-change notification logic', () => {
   it('allows a meaningful drop and ignores noise', () => {
@@ -20,7 +24,7 @@ describe('price-change notification logic', () => {
     expect(shouldNotify(true)).toBe(false);
   });
 
-  it('analyzes every new scan listing and keeps the threshold for other work', () => {
+  it('runs AI/history only after the deterministic promising-candidate gate', () => {
     const input = {
       mode: 'scan',
       skipAi: false,
@@ -30,7 +34,7 @@ describe('price-change notification logic', () => {
       totalScore: 10,
       threshold: 55,
     } as const;
-    expect(shouldAnalyzeListing(input)).toBe(true);
+    expect(shouldAnalyzeListing(input)).toBe(false);
     expect(shouldAnalyzeListing({ ...input, isNew: false })).toBe(false);
     expect(shouldAnalyzeListing({ ...input, isNew: false, rejected: false, totalScore: 55 })).toBe(
       true,
@@ -60,5 +64,41 @@ describe('price-change notification logic', () => {
     );
     expect(canCompleteBaseline(full, { processed: 1, errors: 1 })).toBe(false);
     expect(canCompleteBaseline(full, { processed: 0, errors: 0 })).toBe(false);
+  });
+
+  it('creates a low-confidence fallback when AI cannot analyze a new listing', () => {
+    const normalized = normalizeListing(rawListing(), searchProfiles[0]!);
+    const listing = {
+      ...normalized,
+      id: 'listing-id',
+      firstSeenAt: normalized.scrapedAt,
+      lastSeenAt: normalized.scrapedAt,
+      previousMaterialHash: null,
+      previousPricePln: null,
+      isNew: true,
+      materiallyChanged: false,
+    };
+    const fallback = createFallbackAnalysis(listing, {
+      totalScore: 78,
+      rejected: false,
+      reasons: ['RWD jest zgodne z preferencjami.'],
+      breakdown: {
+        profileFit: 25,
+        bodyStyleBonus: 5,
+        variant: 10,
+        year: 10,
+        price: 15,
+        engine: 6,
+        transmission: 3,
+        drivetrain: 5,
+        seller: 0,
+        dataQuality: 9,
+        freshness: 0,
+      },
+    });
+
+    expect(fallback.totalScore).toBe(78);
+    expect(fallback.analysisConfidence).toBe(0);
+    expect(fallback.recommendedAction).toBe('call');
   });
 });

@@ -5,6 +5,7 @@ import type {
   ListingAnalysis,
   SearchProfile,
   SellerAssessment,
+  VehicleHistoryAnalysis,
 } from '../domain/types.js';
 import { inferEngine, type EngineInference } from '../services/engine-inference.js';
 import { detectSellerType, sellerTypeFromDealerProbability } from '../services/seller-detection.js';
@@ -21,6 +22,7 @@ export function applyRecommendationPolicy(
   listing: Listing,
   profile: SearchProfile,
   deterministicScore: DeterministicScore,
+  vehicleHistory?: VehicleHistoryAnalysis,
 ): ListingAnalysis {
   const inferredEngine = inferEngine(listing);
   const engine = reconcileEngine(raw, inferredEngine);
@@ -56,6 +58,9 @@ export function applyRecommendationPolicy(
     ...(listing.driveType === 'awd'
       ? ['xDrive zwiększa złożoność napędu i potencjalne koszty serwisu.']
       : []),
+    ...(vehicleHistory?.historySignals
+      .filter((signal) => signal.severity === 'strong_warning' || signal.severity === 'warning')
+      .map((signal) => signal.messagePl) ?? []),
   ]).slice(0, 8);
   const verificationItems = buildVerificationItems(
     raw.verificationItems,
@@ -65,7 +70,12 @@ export function applyRecommendationPolicy(
   );
   const analysisConfidence = Math.min(raw.analysisConfidence, engine.confidence < 0.7 ? 0.79 : 1);
   let totalScore = clamp(
-    Math.round(deterministicScore.totalScore * 0.7 + raw.fitScore * 0.3 - raw.riskScore * 0.2),
+    Math.round(
+      deterministicScore.totalScore * 0.7 +
+        raw.fitScore * 0.3 -
+        raw.riskScore * 0.2 +
+        (vehicleHistory?.scoreAdjustment ?? 0),
+    ),
   );
   if (analysisConfidence < 0.8 || engine.confidence < 0.8 || majorUncertainties.length > 0)
     totalScore = Math.min(totalScore, 89);
@@ -76,8 +86,14 @@ export function applyRecommendationPolicy(
     engine.engine === 'unknown' ||
     engine.engine === 'N52B30_or_N53B30' ||
     engine.confidence < 0.75;
-  const recommendedAction =
-    raw.recommendedAction === 'inspect' && missingKeyInformation ? 'call' : raw.recommendedAction;
+  const seriousHistory = vehicleHistory?.serious ?? false;
+  const recommendedAction = seriousHistory
+    ? raw.recommendedAction === 'ignore'
+      ? 'ignore'
+      : 'call'
+    : raw.recommendedAction === 'inspect' && missingKeyInformation
+      ? 'call'
+      : raw.recommendedAction;
 
   return {
     ...raw,

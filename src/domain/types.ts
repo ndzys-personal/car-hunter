@@ -135,6 +135,73 @@ export interface DeterministicScore {
   breakdown: ScoreBreakdown;
 }
 
+export type HistoryConfidence = 'low' | 'medium' | 'high';
+export type HistorySignalSeverity = 'info' | 'warning' | 'strong_warning' | 'positive';
+export type VehicleHistorySignalType =
+  | 'vehicle_listed_for_months'
+  | 'multiple_price_reductions'
+  | 'mileage_decrease'
+  | 'mileage_increase_normal'
+  | 'unusually_high_usage'
+  | 'stale_mileage_description'
+  | 'major_description_change'
+  | 'previously_damaged'
+  | 'previously_non_running'
+  | 'seller_changed'
+  | 'possible_flip'
+  | 'seller_consistency';
+
+/** A dated observation. Facts are nullable rather than inferred from a similar-looking car. */
+export interface HistoricalVehicleRecord {
+  id?: string;
+  source: string;
+  sourceListingId?: string | null;
+  historicalUrl: string;
+  observedAt: string;
+  publishedAt: string | null;
+  pricePln: number | null;
+  mileageKm: number | null;
+  title: string | null;
+  vehicleModel: string | null;
+  location: string | null;
+  sellerId: string | null;
+  sellerName: string | null;
+  sellerType: SellerType | null;
+  descriptionExcerpt: string | null;
+  damageStatus: 'damaged' | 'not_damaged' | 'unknown';
+  runningStatus: 'running' | 'non_running' | 'unknown';
+  vinConfirmed: boolean;
+  confidence: HistoryConfidence;
+  evidenceUrl: string;
+  origin: 'internal' | 'external';
+}
+
+export interface VehicleHistorySignal {
+  type: VehicleHistorySignalType;
+  severity: HistorySignalSeverity;
+  confidence: HistoryConfidence;
+  messagePl: string;
+  evidenceUrls: string[];
+}
+
+export interface VehicleHistoryAnalysis {
+  vin: string | null;
+  earliestKnownListing: string | null;
+  listedSinceAt: string | null;
+  estimatedDaysOnMarket: number | null;
+  previousListings: HistoricalVehicleRecord[];
+  currentPrice: number | null;
+  previousPrices: number[];
+  priceDropAmount: number | null;
+  priceDropPercent: number | null;
+  historySignals: VehicleHistorySignal[];
+  scoreAdjustment: number;
+  meaningful: boolean;
+  serious: boolean;
+  checkedAt: string | null;
+  fingerprint: string;
+}
+
 export interface ListingAnalysis {
   sellerDeclaredType: SellerType;
   sellerInferredType: SellerInferredType;
@@ -176,6 +243,7 @@ export interface SellerAssessment {
 
 export interface PersistedListing extends Listing {
   id: string;
+  vehicleId?: string | null;
   firstSeenAt: string;
   lastSeenAt: string;
   previousMaterialHash: string | null;

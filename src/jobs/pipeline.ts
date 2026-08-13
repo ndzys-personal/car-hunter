@@ -6,6 +6,7 @@ import { CarHunterRepository } from '../db/repository.js';
 import type { SourceName } from '../domain/types.js';
 import { normalizeListing } from '../services/normalization.js';
 import { logger } from '../services/logger.js';
+import { createFallbackAnalysis } from '../services/fallback-analysis.js';
 import { createAdapters } from '../sources/index.js';
 import { TelegramService } from '../telegram/telegram.js';
 
@@ -67,7 +68,15 @@ export async function runPipeline(
                 totalScore: score.totalScore,
                 threshold: config.AI_SCORE_THRESHOLD,
               });
-              if (!eligibleForAi || !aiProvider) continue;
+              const shouldSend = Boolean(
+                telegram && shouldAttemptTelegram(options.mode, persisted.isNew),
+              );
+              if (!eligibleForAi || !aiProvider) {
+                if (shouldSend && telegram) {
+                  await sendFallbackNotification(repository, telegram, persisted, score);
+                }
+                continue;
+              }
 
               const cached = await repository.getCachedAnalysis(
                 persisted.id,
@@ -83,15 +92,29 @@ export async function runPipeline(
                 persisted.materiallyChanged ||
                 hasOlderPromptAnalysis;
               if (!needsAnalysis) continue;
-              const analysis = cached ?? (await aiProvider.analyze(persisted, profile, score));
-              const analysisId = await repository.saveAnalysis(
-                persisted.id,
-                persisted.materialHash,
-                aiProvider.name,
-                aiProvider.model,
-                LISTING_ANALYSIS_PROMPT_VERSION,
-                analysis,
-              );
+              let analysis;
+              let analysisId;
+              try {
+                analysis = cached ?? (await aiProvider.analyze(persisted, profile, score));
+                analysisId = await repository.saveAnalysis(
+                  persisted.id,
+                  persisted.materialHash,
+                  aiProvider.name,
+                  aiProvider.model,
+                  LISTING_ANALYSIS_PROMPT_VERSION,
+                  analysis,
+                );
+              } catch (error) {
+                counts.errors += 1;
+                logger.error(
+                  { error, listingId: persisted.id },
+                  'AI analysis failed; sending deterministic fallback notification',
+                );
+                if (shouldSend && telegram) {
+                  await sendFallbackNotification(repository, telegram, persisted, score);
+                }
+                continue;
+              }
 
               if (!telegram || !shouldAttemptTelegram(options.mode, persisted.isNew)) continue;
               const alreadyNotified = await repository.wasNotified(
@@ -154,6 +177,29 @@ export async function runPipeline(
     await repository.finishRun(runId, 'failed', counts).catch(() => undefined);
     throw error;
   }
+}
+
+async function sendFallbackNotification(
+  repository: CarHunterRepository,
+  telegram: TelegramService,
+  listing: Parameters<typeof createFallbackAnalysis>[0],
+  score: Parameters<typeof createFallbackAnalysis>[1],
+): Promise<void> {
+  if (await repository.wasNotified(listing.id, listing.materialHash)) return;
+  const analysis = createFallbackAnalysis(listing, score);
+  const messageId = await telegram.sendListing(
+    listing,
+    analysis,
+    isMeaningfulPriceDrop(listing.previousPricePln, listing.pricePln),
+  );
+  await repository.saveNotification({
+    listingId: listing.id,
+    materialHash: listing.materialHash,
+    reason: 'new_listing_fallback',
+    totalScore: analysis.totalScore,
+    recommendedAction: analysis.recommendedAction,
+    telegramMessageId: messageId,
+  });
 }
 
 export function isMeaningfulPriceDrop(previous: number | null, current: number | null): boolean {

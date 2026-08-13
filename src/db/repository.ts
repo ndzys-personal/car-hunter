@@ -350,7 +350,7 @@ export class CarHunterRepository {
 
   async saveNotification(input: {
     listingId: string;
-    analysisId: string;
+    analysisId?: string;
     materialHash: string;
     reason: string;
     totalScore: number;
@@ -359,7 +359,7 @@ export class CarHunterRepository {
   }): Promise<void> {
     const { error } = await this.db.from('notifications').insert({
       listing_id: input.listingId,
-      listing_analysis_id: input.analysisId,
+      listing_analysis_id: input.analysisId ?? null,
       material_hash: input.materialHash,
       reason: input.reason,
       total_score: input.totalScore,

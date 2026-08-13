@@ -15,6 +15,7 @@ export class TelegramService {
   constructor(
     private readonly botToken: string,
     private readonly chatId: string,
+    private readonly fetcher: typeof fetch = fetch,
   ) {}
 
   async sendListing(
@@ -34,22 +35,39 @@ export class TelegramService {
   }
 
   private async sendHtml(text: string, disablePreview: boolean): Promise<string> {
-    const response = await fetch(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: this.chatId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: disablePreview,
-      }),
-    });
-    const payload = (await response.json()) as TelegramResponse<TelegramMessage>;
-    if (!response.ok || !payload.ok || !payload.result) {
-      throw new Error(payload.description ?? `Telegram HTTP ${response.status}`);
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const response = await this.fetcher(
+          `https://api.telegram.org/bot${this.botToken}/sendMessage`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: this.chatId,
+              text,
+              parse_mode: 'HTML',
+              disable_web_page_preview: disablePreview,
+            }),
+            signal: AbortSignal.timeout(15_000),
+          },
+        );
+        const payload = (await response.json()) as TelegramResponse<TelegramMessage>;
+        if (!response.ok || !payload.ok || !payload.result) {
+          throw new Error(payload.description ?? `Telegram HTTP ${response.status}`);
+        }
+        return String(payload.result.message_id);
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) await delay(attempt * 250);
+      }
     }
-    return String(payload.result.message_id);
+    throw lastError;
   }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export function formatMessage(

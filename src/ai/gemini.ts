@@ -35,6 +35,10 @@ export class GeminiProvider implements AiProvider {
       model: this.model,
       contents,
       config: {
+        httpOptions: {
+          timeout: 30_000,
+          retryOptions: { attempts: 2 },
+        },
         responseMimeType: 'application/json',
         responseJsonSchema: rawListingAnalysisJsonSchema,
       },

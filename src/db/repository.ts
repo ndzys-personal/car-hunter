@@ -57,6 +57,47 @@ export class CarHunterRepository {
     if (error) throw error;
   }
 
+  async getPendingNotificationListingIds(): Promise<Set<string>> {
+    const { data: baseline, error: baselineError } = await this.db
+      .from('app_state')
+      .select('completed_at')
+      .eq('key', 'baseline_completed')
+      .maybeSingle();
+    if (baselineError) throw baselineError;
+    if (typeof baseline?.completed_at !== 'string') return new Set();
+
+    const listingIds: string[] = [];
+    const pageSize = 1_000;
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await this.db
+        .from('listings')
+        .select('id')
+        .gt('first_seen_at', baseline.completed_at)
+        .order('id', { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      const page = (data ?? []) as Array<{ id: string }>;
+      listingIds.push(...page.map(({ id }) => id));
+      if (page.length < pageSize) break;
+    }
+
+    const notifiedIds = new Set<string>();
+    const queryChunkSize = 100;
+    for (let from = 0; from < listingIds.length; from += queryChunkSize) {
+      const chunk = listingIds.slice(from, from + queryChunkSize);
+      const { data, error } = await this.db
+        .from('notifications')
+        .select('listing_id')
+        .in('listing_id', chunk);
+      if (error) throw error;
+      for (const row of (data ?? []) as Array<{ listing_id: string }>) {
+        notifiedIds.add(row.listing_id);
+      }
+    }
+
+    return new Set(listingIds.filter((id) => !notifiedIds.has(id)));
+  }
+
   async startRun(mode: 'baseline' | 'scan', metadata: Record<string, unknown>): Promise<string> {
     const { data, error } = await this.db
       .from('scan_runs')

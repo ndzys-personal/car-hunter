@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canCompleteBaseline,
+  isFatalPipelineError,
   isMeaningfulPriceDrop,
   isNotificationEvent,
   shouldAnalyzeListing,
@@ -47,13 +48,23 @@ describe('price-change notification logic', () => {
   it('allows Telegram only for newly discovered listings', () => {
     expect(isNotificationEvent(true)).toBe(true);
     expect(isNotificationEvent(false)).toBe(false);
+    expect(isNotificationEvent(false, true)).toBe(true);
   });
 
   it('never notifies for baseline imports and can notify new post-baseline listings', () => {
     expect(shouldAttemptTelegram('baseline', true)).toBe(false);
     expect(shouldAttemptTelegram('baseline', false)).toBe(false);
+    expect(shouldAttemptTelegram('baseline', false, true)).toBe(false);
     expect(shouldAttemptTelegram('scan', false)).toBe(false);
     expect(shouldAttemptTelegram('scan', true)).toBe(true);
+    expect(shouldAttemptTelegram('scan', false, true)).toBe(true);
+  });
+
+  it('fails fast on database/schema errors instead of reporting a green workflow', () => {
+    expect(isFatalPipelineError({ code: '42P10' })).toBe(true);
+    expect(isFatalPipelineError({ code: 'PGRST204' })).toBe(true);
+    expect(isFatalPipelineError(new TypeError('fetch failed'))).toBe(false);
+    expect(isFatalPipelineError({ code: 'ECONNRESET' })).toBe(false);
   });
 
   it('completes only a full, successful, non-empty baseline', () => {

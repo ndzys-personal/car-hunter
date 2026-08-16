@@ -28,6 +28,7 @@ export async function runPipeline(
 ): Promise<void> {
   const runId = await repository.startRun(options.mode, { ...options });
   const counts = { discovered: 0, processed: 0, errors: 0 };
+  let pendingNotificationIds = new Set<string>();
   const adapters = createAdapters({
     headless: config.HEADLESS,
     maxListings: config.MAX_LISTINGS_PER_SOURCE,
@@ -36,6 +37,15 @@ export async function runPipeline(
   });
 
   try {
+    if (options.mode === 'scan' && telegram) {
+      pendingNotificationIds = await repository.getPendingNotificationListingIds();
+      if (pendingNotificationIds.size > 0) {
+        logger.warn(
+          { pendingNotifications: pendingNotificationIds.size },
+          'Recovering post-baseline listings that were never delivered',
+        );
+      }
+    }
     const profiles = searchProfiles.filter(
       (profile) => !options.profile || profile.id === options.profile,
     );
@@ -61,6 +71,23 @@ export async function runPipeline(
               const score = persistedResult.score;
               counts.processed += 1;
 
+              const recoveringNotification = pendingNotificationIds.has(persisted.id);
+              const notificationEvent = isNotificationEvent(
+                persisted.isNew,
+                recoveringNotification,
+              );
+
+              if (recoveringNotification && telegram) {
+                await sendFallbackNotification(
+                  repository,
+                  telegram,
+                  persisted,
+                  score,
+                  'missed_listing_recovery_fallback',
+                );
+                continue;
+              }
+
               const eligibleForAi = shouldAnalyzeListing({
                 mode: options.mode,
                 skipAi: options.skipAi,
@@ -71,11 +98,20 @@ export async function runPipeline(
                 threshold: config.AI_SCORE_THRESHOLD,
               });
               const shouldSend = Boolean(
-                telegram && shouldAttemptTelegram(options.mode, persisted.isNew),
+                telegram &&
+                shouldAttemptTelegram(options.mode, persisted.isNew, recoveringNotification),
               );
               if (!eligibleForAi || !aiProvider) {
                 if (shouldSend && telegram) {
-                  await sendFallbackNotification(repository, telegram, persisted, score);
+                  await sendFallbackNotification(
+                    repository,
+                    telegram,
+                    persisted,
+                    score,
+                    recoveringNotification
+                      ? 'missed_listing_recovery_fallback'
+                      : 'new_listing_fallback',
+                  );
                 }
                 continue;
               }
@@ -99,7 +135,7 @@ export async function runPipeline(
                   : await repository.hasAnalysisForMaterial(persisted.id, persisted.materialHash);
                 const needsAnalysis =
                   options.mode === 'baseline' ||
-                  persisted.isNew ||
+                  notificationEvent ||
                   persisted.materiallyChanged ||
                   hasOlderPromptAnalysis;
                 if (!needsAnalysis) continue;
@@ -143,12 +179,19 @@ export async function runPipeline(
                     listingId: persisted.id,
                     ...(analysisId ? { analysisId } : {}),
                     materialHash: persisted.materialHash,
-                    reason: analysisId ? 'new_listing' : 'new_listing_fallback',
+                    reason: recoveringNotification
+                      ? analysisId
+                        ? 'missed_listing_recovery'
+                        : 'missed_listing_recovery_fallback'
+                      : analysisId
+                        ? 'new_listing'
+                        : 'new_listing_fallback',
                     totalScore: analysis.totalScore,
                     recommendedAction: analysis.recommendedAction,
                     telegramMessageId: messageId,
                   });
                 } catch (error) {
+                  if (isFatalPipelineError(error)) throw error;
                   counts.errors += 1;
                   logger.error(
                     { error, listingId: persisted.id },
@@ -157,6 +200,7 @@ export async function runPipeline(
                 }
               }
             } catch (error) {
+              if (isFatalPipelineError(error)) throw error;
               counts.errors += 1;
               logger.error(
                 { error, source: sourceName, url: raw.url },
@@ -165,6 +209,7 @@ export async function runPipeline(
             }
           }
         } catch (error) {
+          if (isFatalPipelineError(error)) throw error;
           counts.errors += 1;
           logger.error(
             { error, source: sourceName, profile: profile.id },
@@ -195,6 +240,7 @@ async function sendFallbackNotification(
   telegram: TelegramService,
   listing: Parameters<typeof createFallbackAnalysis>[0],
   score: Parameters<typeof createFallbackAnalysis>[1],
+  reason: 'new_listing_fallback' | 'missed_listing_recovery_fallback',
 ): Promise<void> {
   if (await repository.wasNotified(listing.id, listing.materialHash)) return;
   const analysis = createFallbackAnalysis(listing, score);
@@ -206,7 +252,7 @@ async function sendFallbackNotification(
   await repository.saveNotification({
     listingId: listing.id,
     materialHash: listing.materialHash,
-    reason: 'new_listing_fallback',
+    reason,
     totalScore: analysis.totalScore,
     recommendedAction: analysis.recommendedAction,
     telegramMessageId: messageId,
@@ -219,12 +265,22 @@ export function isMeaningfulPriceDrop(previous: number | null, current: number |
   return drop >= 1_000 || drop / previous >= 0.03;
 }
 
-export function isNotificationEvent(isNew: boolean): boolean {
-  return isNew;
+export function isNotificationEvent(isNew: boolean, recovering = false): boolean {
+  return isNew || recovering;
 }
 
-export function shouldAttemptTelegram(mode: PipelineOptions['mode'], isNew: boolean): boolean {
-  return mode === 'scan' && isNotificationEvent(isNew);
+export function shouldAttemptTelegram(
+  mode: PipelineOptions['mode'],
+  isNew: boolean,
+  recovering = false,
+): boolean {
+  return mode === 'scan' && isNotificationEvent(isNew, recovering);
+}
+
+export function isFatalPipelineError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  const code = String(error.code);
+  return /^[0-9A-Z]{5}$/.test(code) || code.startsWith('PGRST');
 }
 
 export function shouldAnalyzeListing(input: {

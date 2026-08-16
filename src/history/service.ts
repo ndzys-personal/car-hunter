@@ -8,9 +8,7 @@ import type { VehicleHistoryProvider } from './provider.js';
 
 export interface HistoryPersistence {
   getHistoryRecords(vehicleId: string): Promise<HistoricalVehicleRecord[]>;
-  getHistoryCache(
-    vehicleId: string,
-  ): Promise<{
+  getHistoryCache(vehicleId: string): Promise<{
     historyCheckedAt: string | null;
     historyCheckVersion: string | null;
     listingFingerprint: string | null;

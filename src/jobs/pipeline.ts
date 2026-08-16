@@ -75,7 +75,7 @@ export async function runPipeline(
               );
               if (!eligibleForAi || !aiProvider) {
                 if (shouldSend && telegram) {
-                  await notifyListing(repository, telegram, persisted, score);
+                  await sendFallbackNotification(repository, telegram, persisted, score);
                 }
                 continue;
               }
@@ -143,7 +143,7 @@ export async function runPipeline(
                     listingId: persisted.id,
                     ...(analysisId ? { analysisId } : {}),
                     materialHash: persisted.materialHash,
-                    reason: 'new_listing',
+                    reason: analysisId ? 'new_listing' : 'new_listing_fallback',
                     totalScore: analysis.totalScore,
                     recommendedAction: analysis.recommendedAction,
                     telegramMessageId: messageId,
@@ -190,7 +190,7 @@ export async function runPipeline(
   }
 }
 
-async function notifyListing(
+async function sendFallbackNotification(
   repository: CarHunterRepository,
   telegram: TelegramService,
   listing: Parameters<typeof createFallbackAnalysis>[0],
@@ -206,7 +206,7 @@ async function notifyListing(
   await repository.saveNotification({
     listingId: listing.id,
     materialHash: listing.materialHash,
-    reason: 'new_listing',
+    reason: 'new_listing_fallback',
     totalScore: analysis.totalScore,
     recommendedAction: analysis.recommendedAction,
     telegramMessageId: messageId,

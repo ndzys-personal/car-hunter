@@ -13,7 +13,6 @@ export function createFallbackAnalysis(
   const seller = detectSellerType(listing);
   const engine = inferEngine(listing);
   const recommendedAction = score.rejected ? 'ignore' : score.totalScore >= 70 ? 'call' : 'review';
-
   return {
     sellerDeclaredType: listing.declaredSellerType,
     sellerInferredType: seller.inferredType,
